@@ -1,85 +1,85 @@
 # YouTube Shorts Blocker
 
-A Chrome/Edge extension that helps you stay focused by blocking YouTube Shorts and other distracting websites.
+A Chrome/Edge extension that keeps you off YouTube Shorts and other distracting sites with a master toggle, redirects, and timed block rules.
 
-## Features
+## What it does
 
-- **🚫 Block YouTube Shorts**: Automatically redirects YouTube Shorts to the main YouTube homepage.
-- **🛡️ Custom Site Blocking**: Add any other websites you want to block (e.g., `twitter.com`, `instagram.com`).
-- **⏱️ Temporary Unblock**: Option to temporarily unblock sites for a specific duration.
-- **🔄 Sync Across Devices**: Uses Chrome Sync Storage to keep your blocked list and settings synchronized across all your devices.
-- **⚡ SPA Support**: Works seamlessly with Single Page Applications (like YouTube) without requiring page reloads.
+- Redirects any `youtube.com/shorts/...` visit to the YouTube home page when blocking is on.
+- Global master switch pauses/resumes both Shorts redirects and every custom rule.
+- Custom blocklist for whole domains or specific paths (for example `x.com` or `youtube.com/shorts`), with per-site toggles and remove.
+- Optional timers per site to automatically turn a block off after 15m/1h/4h/1d when adding or updating a site.
+- Network-level blocking for custom sites via `declarativeNetRequest`, plus a SPA fallback redirect that also increments the counter shown in the popup.
+- Stores settings, timers, and counts in Chrome Sync so the same list follows you across devices (up to 400 custom block rules).
 
-## How It Works
+## How it works
 
-The extension uses a dual-approach to ensure effective blocking:
-
-1.  **Content Script**: Runs on YouTube to detect client-side navigation (SPA) to Shorts and redirects immediately.
-2.  **Background Script**: Uses the `declarativeNetRequest` API for network-level blocking of custom sites and `webNavigation` API as a fallback for history state updates.
+- **Content script (YouTube only):** Runs at `document_start`, listens for `yt-navigate-finish`, `popstate`, and URL changes via `MutationObserver`, and replaces Shorts URLs with `https://www.youtube.com` when the master toggle is enabled.
+- **Background service worker:** Loads the `enabled` state and saved sites, applies timers with `chrome.alarms`, builds dynamic `declarativeNetRequest` rules for active sites, and uses `webNavigation.onHistoryStateUpdated` as a fallback to redirect SPA navigations to the site root while incrementing `blockedCount`.
+- **Popup UI:** Lets you toggle blocking globally, add/remove/toggle sites, attach timers, and reset the counter. Changes are stored in `chrome.storage.sync` and picked up by both the content script and background worker.
 
 ### Architecture Diagram
 
 ```mermaid
 graph TD
     User[User] -->|Navigates| Browser[Browser]
-    
-    subgraph "Extension Logic"
+
+    subgraph Extension
         direction TB
-        
-        subgraph "Content Script (YouTube)"
-            CS_Event[Listen: yt-navigate-finish / popstate]
-            CS_Check{Is URL /shorts/?}
-            CS_Redirect[Redirect to youtube.com]
-            
-            CS_Event --> CS_Check
-            CS_Check -->|Yes| CS_Redirect
-            CS_Check -->|No| Allow1[Allow Navigation]
+
+        subgraph Popup["Popup UI"]
+            UI_Toggle[Master toggle]
+            UI_Add[Add site + timer]
+            UI_Reset[Reset counter]
         end
-        
-        subgraph "Background Script"
-            BG_DNR[declarativeNetRequest]
-            BG_Nav[webNavigation.onHistoryStateUpdated]
-            BG_Storage[Storage Sync]
-            
-            BG_DNR -->|Match Rule| BlockRequest[Block Network Request]
-            BG_Nav -->|Match Custom Site| UpdateTab[Redirect Tab]
+
+        subgraph Background["Background Service Worker"]
+            BG_Load[Load storage + timers]
+            BG_Alarms[Alarm checks for expiry]
+            BG_DNR[declarativeNetRequest rules]
+            BG_Nav[webNavigation fallback redirect + counter]
         end
-        
-        subgraph "Popup UI"
-            UI_Toggle[Toggle Blocking]
-            UI_Add[Add Custom Site]
-            UI_Timer[Set Timer]
-            
-            UI_Toggle --> BG_Storage
-            UI_Add --> BG_Storage
-            UI_Timer --> BG_Storage
+
+        subgraph Content["Content Script (YouTube)"]
+            CS_Event[yt-navigate-finish / popstate / MutationObserver]
+            CS_Check{URL has /shorts/ and enabled?}
+            CS_Redirect[Replace with youtube.com]
+            CS_Allow[Allow navigation]
         end
     end
-    
-    Browser -->|Network Request| BG_DNR
-    Browser -->|History Update| BG_Nav
-    Browser -->|Page Load| CS_Event
-    
-    BG_Storage -->|On Change| BG_DNR
+
+    UI_Toggle --> BG_Load
+    UI_Add --> BG_Load
+    UI_Reset --> BG_Load
+    BG_Load --> BG_DNR
+    BG_Load --> BG_Alarms
+    BG_Alarms --> BG_DNR
+
+    Browser -->|Network request| BG_DNR
+    Browser -->|History update| BG_Nav
+    Browser -->|Page load| CS_Event
+
+    CS_Event --> CS_Check
+    CS_Check -->|Yes| CS_Redirect
+    CS_Check -->|No| CS_Allow
 ```
+
+## Using the popup
+
+- Flip the master toggle to turn all blocking on or off.
+- Add a domain or path (for example `tiktok.com` or `youtube.com/shorts`) and pick a duration if you want the block to auto-disable later.
+- Toggle or remove any saved site, or set a new timer with the quick buttons or dropdown.
+- The counter shows SPA redirects handled by the fallback and can be reset with the button at the bottom.
 
 ## Installation
 
-1.  Clone or download this repository.
-2.  Run `npm install` or `yarn` to install dependencies.
-3.  Run `npm run build` to build the extension.
-4.  Open Chrome/Edge and navigate to `chrome://extensions`.
-5.  Enable "Developer mode" in the top right.
-6.  Click "Load unpacked" and select the `dist` folder from this project.
+1. Clone or download this repository.
+2. Run `npm install` or `yarn` to install dependencies.
+3. Run `npm run build` to build the extension into `dist/`.
+4. Open Chrome/Edge and navigate to `chrome://extensions`.
+5. Enable "Developer mode" in the top right.
+6. Click "Load unpacked" and select the `dist` folder from this project.
 
 ## Development
 
 - `npm run dev`: Watch for changes and rebuild automatically.
 - `npm run build`: Build for production.
-
-## Technologies
-
-- **TypeScript**: For type-safe code.
-- **React**: For the popup user interface.
-- **Tailwind CSS**: For styling the popup.
-- **Webpack**: For bundling the extension.
