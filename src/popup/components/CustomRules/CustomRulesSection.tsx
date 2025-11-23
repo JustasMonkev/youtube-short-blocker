@@ -51,11 +51,11 @@ const CustomRulesSection: React.FC<CustomRulesSectionProps> = ({
         value={customUrl}
         error={error}
         durationMinutes={durationMinutes}
-      durationOptions={durationOptions}
-      onChange={onUrlChange}
-      onDurationChange={onDurationChange}
-      onSubmit={onSubmit}
-    />
+        durationOptions={durationOptions}
+        onChange={onUrlChange}
+        onDurationChange={onDurationChange}
+        onSubmit={onSubmit}
+      />
       <CustomRuleList
         sites={sites}
         now={now}

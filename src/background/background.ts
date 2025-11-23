@@ -29,6 +29,10 @@ chrome.runtime.onInstalled.addListener(() => {
   });
 });
 
+chrome.runtime.onStartup.addListener(() => {
+  initializeState();
+});
+
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name !== EXPIRY_ALARM_NAME) {
     return;
@@ -202,7 +206,8 @@ function scheduleNextExpiry(sites: CustomSite[], now: number = Date.now()): void
   }
 
   const soonest = Math.min(...upcoming);
-  chrome.alarms.create(EXPIRY_ALARM_NAME, { when: soonest + 1000 });
+  // Keep a periodic alarm so timers are re-checked even if a single wakeup is missed.
+  chrome.alarms.create(EXPIRY_ALARM_NAME, { when: soonest + 1000, periodInMinutes: 1 });
 }
 
 function buildRuleCondition(site: CustomSite): chrome.declarativeNetRequest.RuleCondition {
