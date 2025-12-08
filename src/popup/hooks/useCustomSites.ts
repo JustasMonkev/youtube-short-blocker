@@ -62,7 +62,7 @@ export function useCustomSites() {
     const newSite = applyDurationToSite(createCustomSite(parsed), durationMinutes);
 
     const nextSites = [...customSites, newSite].sort((a, b) =>
-      (a.label || a.host).localeCompare(b.label || b.host)
+      (a.label || '').localeCompare(b.label || '')
     );
 
     persistSites(nextSites);

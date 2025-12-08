@@ -42,8 +42,12 @@ export function sanitizeSites(value: unknown): CustomSite[] {
       const label = site.label || (path ? `${host}${path}` : host);
       const expiresAt = normalizeExpiresAt(site.expiresAt);
 
+      if (!host) {
+        return null;
+      }
+
       const sanitizedSite: CustomSite = {
-        id: site.id || `site-${index}`,
+        id: site.id || (site.id === undefined && self.crypto && crypto.randomUUID ? crypto.randomUUID() : `site-${index}`),
         host,
         path,
         label,
