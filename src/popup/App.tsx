@@ -26,7 +26,7 @@ const App: React.FC = () => {
   } = useCustomSites();
 
   return (
-    <div className="bg-gradient-to-b from-gray-50 to-white rounded-xl overflow-hidden">
+    <div className="bg-gradient-to-b from-gray-50 to-white dark:from-gray-900 dark:to-gray-800 rounded-xl overflow-hidden min-h-[500px]">
       <Header />
       <div className="p-5 space-y-4">
         <StatusCard enabled={enabled} />

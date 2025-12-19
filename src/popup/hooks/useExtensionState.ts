@@ -3,11 +3,18 @@ import { useCallback, useEffect, useState } from 'react';
 export function useExtensionState() {
   const [enabled, setEnabled] = useState(true);
   const [blockedCount, setBlockedCount] = useState(0);
+  const [darkMode, setDarkMode] = useState(false);
 
   useEffect(() => {
-    chrome.storage.sync.get(['enabled', 'blockedCount'], (result) => {
+    chrome.storage.sync.get(['enabled', 'blockedCount', 'darkMode'], (result) => {
       setEnabled(result.enabled !== false);
       setBlockedCount(result.blockedCount || 0);
+      const isDark = result.darkMode === true;
+      setDarkMode(isDark);
+      // Apply dark mode to document
+      if (isDark) {
+        document.documentElement.classList.add('dark');
+      }
     });
   }, []);
 
@@ -21,5 +28,15 @@ export function useExtensionState() {
     chrome.storage.sync.set({ blockedCount: 0 });
   }, []);
 
-  return { enabled, blockedCount, toggleEnabled, resetBlockedCount };
+  const toggleDarkMode = useCallback((enabled: boolean) => {
+    setDarkMode(enabled);
+    if (enabled) {
+      document.documentElement.classList.add('dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+    }
+    chrome.storage.sync.set({ darkMode: enabled });
+  }, []);
+
+  return { enabled, blockedCount, darkMode, toggleEnabled, resetBlockedCount, toggleDarkMode };
 }

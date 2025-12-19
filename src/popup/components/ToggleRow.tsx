@@ -7,11 +7,11 @@ interface ToggleRowProps {
 }
 
 const ToggleRow: React.FC<ToggleRowProps> = ({ enabled, onToggle }) => (
-  <div className="flex items-start gap-3 p-3 bg-white rounded-md border border-gray-200 shadow-sm">
+  <div className="flex items-start gap-3 p-3 bg-white dark:bg-gray-800 rounded-md border border-gray-200 dark:border-gray-700 shadow-sm">
     <ToggleSwitch checked={enabled} onChange={onToggle} />
     <div className="flex flex-col gap-1">
-      <span className="font-semibold text-gray-900">Master switch</span>
-      <span className="text-sm text-gray-600">
+      <span className="font-semibold text-gray-900 dark:text-gray-100">Master switch</span>
+      <span className="text-sm text-gray-600 dark:text-gray-400">
         Applies to Shorts redirects and every custom site/timer you add.
       </span>
     </div>

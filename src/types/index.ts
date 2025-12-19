@@ -12,6 +12,7 @@ export interface StorageData {
   enabled: boolean;
   blockedCount: number;
   customSites: CustomSite[];
+  darkMode?: boolean;
 }
 
 export interface ParsedHost {

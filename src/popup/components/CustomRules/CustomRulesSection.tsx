@@ -39,10 +39,10 @@ const CustomRulesSection: React.FC<CustomRulesSectionProps> = ({
   ];
 
   return (
-    <section className="mb-4 p-4 bg-gray-50 rounded-md border border-gray-100">
+    <section className="mb-4 p-4 bg-gray-50 dark:bg-gray-800 rounded-md border border-gray-100 dark:border-gray-700">
       <div className="mb-3">
-        <h2 className="text-base font-semibold mb-1">Custom sites & timers</h2>
-        <p className="text-sm text-gray-600">
+        <h2 className="text-base font-semibold mb-1 dark:text-gray-100">Custom sites & timers</h2>
+        <p className="text-sm text-gray-600 dark:text-gray-400">
           Block entire sites like x.com or specific paths (e.g. youtube.com/shorts). Add an optional timer to auto-pause later.
         </p>
       </div>

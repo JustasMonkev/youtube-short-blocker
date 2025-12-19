@@ -25,51 +25,53 @@ const CustomRuleItem: React.FC<CustomRuleItemProps> = ({
   const pathLabel = site.path ? `${site.host}${site.path}` : `${site.host} (all pages)`;
 
   return (
-    <li className="p-3 border border-gray-200 rounded-lg flex flex-col gap-2 bg-white shadow-sm">
+    <li className="p-3 border border-gray-200 dark:border-gray-700 rounded-lg flex flex-col gap-2 bg-white dark:bg-gray-800 shadow-sm">
       <div className="flex items-start gap-3">
         <ToggleSwitch checked={site.enabled} onChange={onToggle} small />
         <div className="flex flex-col flex-grow gap-1">
           <div className="flex items-center gap-2 flex-wrap">
-            <span className="font-semibold text-gray-900" style={{ opacity: site.enabled ? 1 : 0.6 }}>
+            <span className="font-semibold text-gray-900 dark:text-gray-100" style={{ opacity: site.enabled ? 1 : 0.6 }}>
               {site.label || site.host}
             </span>
             <span
               className={`text-[11px] uppercase tracking-wide px-2 py-0.5 rounded-full w-fit ${
-                site.mode === 'block' ? 'bg-red-100 text-red-700' : 'bg-yellow-100 text-yellow-700'
+                site.mode === 'block' 
+                  ? 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400' 
+                  : 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400'
               }`}
             >
               {site.mode === 'block' ? 'Blocked' : 'JS disabled'}
             </span>
             {timeLeft && (
-              <span className="text-[11px] bg-primary-50 text-primary-700 px-2 py-0.5 rounded-full">
+              <span className="text-[11px] bg-primary-50 text-primary-700 dark:bg-primary-900/30 dark:text-primary-400 px-2 py-0.5 rounded-full">
                 {timeLeft}
               </span>
             )}
           </div>
-          <p className="text-xs text-gray-600">{pathLabel}</p>
+          <p className="text-xs text-gray-600 dark:text-gray-400">{pathLabel}</p>
         </div>
         <button
           onClick={onRemove}
-          className="border-0 bg-transparent text-gray-500 hover:text-red-500 cursor-pointer text-base leading-none p-1"
+          className="border-0 bg-transparent text-gray-500 dark:text-gray-400 hover:text-red-500 dark:hover:text-red-400 cursor-pointer text-base leading-none p-1"
           aria-label={`Remove ${site.label || site.host}`}
         >
           ✕
         </button>
       </div>
       <div className="flex flex-wrap items-center gap-1">
-        <span className="text-[11px] uppercase tracking-wide text-gray-500 mr-1">Timer:</span>
+        <span className="text-[11px] uppercase tracking-wide text-gray-500 dark:text-gray-400 mr-1">Timer:</span>
         {quickButtons.map((minutes) => (
           <button
             key={minutes}
             onClick={() => onDurationChange(minutes)}
-            className="px-2 py-1 text-xs rounded-full bg-gray-100 hover:bg-primary-100 text-gray-700"
+            className="px-2 py-1 text-xs rounded-full bg-gray-100 dark:bg-gray-700 hover:bg-primary-100 dark:hover:bg-primary-900/30 text-gray-700 dark:text-gray-300"
             type="button"
           >
             {formatMinutes(minutes)}
           </button>
         ))}
         <select
-          className="px-2 py-1 text-xs border border-gray-200 rounded-full bg-white"
+          className="px-2 py-1 text-xs border border-gray-200 dark:border-gray-600 rounded-full bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100"
           defaultValue=""
           onChange={(event) => {
             const value = Number(event.target.value);
@@ -90,7 +92,7 @@ const CustomRuleItem: React.FC<CustomRuleItemProps> = ({
         </select>
         <button
           onClick={() => onDurationChange(0)}
-          className="ml-auto px-2 py-1 text-xs rounded-full bg-white border border-gray-200 hover:border-red-200 hover:text-red-500"
+          className="ml-auto px-2 py-1 text-xs rounded-full bg-white dark:bg-gray-700 border border-gray-200 dark:border-gray-600 hover:border-red-200 dark:hover:border-red-800 hover:text-red-500 dark:hover:text-red-400"
           type="button"
         >
           Clear timer

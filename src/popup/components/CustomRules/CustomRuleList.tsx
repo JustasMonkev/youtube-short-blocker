@@ -21,7 +21,7 @@ const CustomRuleList: React.FC<CustomRuleListProps> = ({
 }) => (
   <ul className="flex flex-col gap-2">
     {sites.length === 0 ? (
-      <li className="text-center text-gray-500 text-sm">No custom sites yet. Try x.com, tiktok.com, or reddit.com.</li>
+      <li className="text-center text-gray-500 dark:text-gray-400 text-sm">No custom sites yet. Try x.com, tiktok.com, or reddit.com.</li>
     ) : (
       sites.map((site) => (
         <CustomRuleItem
