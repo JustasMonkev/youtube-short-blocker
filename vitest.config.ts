@@ -22,9 +22,19 @@ export default defineConfig({
         '**/*.d.ts',
         'src/tests/setup.ts',
         'src/types/**',
-        'e2e/**'
+        'e2e/**',
+        '**/e2e/**'
       ],
       include: ['src/**/*.{ts,tsx}']
     },
+    exclude: [
+      '**/node_modules/**',
+      'dist/**',
+      'e2e/**',
+      '**/e2e/**',
+      '.git/**',
+      '.idea/**',
+      '.vscode/**'
+    ],
   },
 });
