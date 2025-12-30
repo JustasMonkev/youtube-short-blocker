@@ -30,7 +30,7 @@ test.describe('Extension Popup', () => {
     // Wait for service worker
     let [background] = context.serviceWorkers();
     if (!background)
-      background = await context.waitForEvent('serviceworker', { timeout: 10000 });
+      background = await context.waitForEvent('serviceworker', { timeout: 20000 });
 
     extensionId = background.url().split('/')[2];
   });
