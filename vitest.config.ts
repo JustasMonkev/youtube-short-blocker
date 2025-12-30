@@ -21,7 +21,8 @@ export default defineConfig({
         '*.config.js',
         '**/*.d.ts',
         'src/tests/setup.ts',
-        'src/types/**'
+        'src/types/**',
+        'e2e/**'
       ],
       include: ['src/**/*.{ts,tsx}']
     },
