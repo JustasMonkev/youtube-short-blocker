@@ -99,7 +99,7 @@ chrome.webNavigation.onHistoryStateUpdated.addListener(
     }
 
     chrome.storage.sync.get(['blockedCount'], (result) => {
-      const newCount = (result.blockedCount || 0) + 1;
+      const newCount = Number(result.blockedCount || 0) + 1;
       chrome.storage.sync.set({ blockedCount: newCount });
     });
 

@@ -8,7 +8,7 @@ export function useExtensionState() {
   useEffect(() => {
     chrome.storage.sync.get(['enabled', 'blockedCount', 'darkMode'], (result) => {
       setEnabled(result.enabled !== false);
-      setBlockedCount(result.blockedCount || 0);
+      setBlockedCount(typeof result.blockedCount === 'number' ? result.blockedCount : 0);
       const isDark = result.darkMode === true;
       setDarkMode(isDark);
       // Apply dark mode to document
