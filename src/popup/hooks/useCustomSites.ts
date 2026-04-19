@@ -1,12 +1,15 @@
 import { useCallback, useEffect, useState } from 'react';
-import { CustomSite } from '../../types';
+import { CustomSite, CustomSiteMode, SiteScope } from '../../types';
 import { createCustomSite, parseHost, sanitizeSites } from '../utils/siteHelpers';
+import { dedupeCustomSites, exportRulesToText, importRulesFromText } from '../utils/ruleTransfer';
 
 export function useCustomSites() {
   const [customSites, setCustomSites] = useState<CustomSite[]>([]);
   const [customUrl, setCustomUrl] = useState('');
   const [error, setError] = useState('');
   const [durationMinutes, setDurationMinutes] = useState(0);
+  const [customMode, setCustomMode] = useState<CustomSiteMode>('block');
+  const [customScope, setCustomScope] = useState<SiteScope>('all');
   const [now, setNow] = useState(Date.now());
 
   useEffect(() => {
@@ -59,7 +62,14 @@ export function useCustomSites() {
       return;
     }
 
-    const newSite = applyDurationToSite(createCustomSite(parsed), durationMinutes);
+    const newSite = applyDurationToSite(
+      createCustomSite(parsed, {
+        mode: customMode,
+        scope: customScope,
+        isProtected: true
+      }),
+      durationMinutes
+    );
 
     const nextSites = [...customSites, newSite].sort((a, b) =>
       (a.label || a.host).localeCompare(b.label || b.host)
@@ -68,10 +78,15 @@ export function useCustomSites() {
     persistSites(nextSites);
     setCustomUrl('');
     setDurationMinutes(0);
-  }, [customSites, customUrl, persistSites, durationMinutes]);
+  }, [customSites, customScope, customMode, customUrl, durationMinutes, persistSites]);
 
   const removeSite = useCallback(
     (id: string) => {
+      const target = customSites.find((site) => site.id === id);
+      if (target?.isProtected) {
+        return;
+      }
+
       const nextSites = customSites.filter((site) => site.id !== id);
       persistSites(nextSites);
     },
@@ -118,18 +133,62 @@ export function useCustomSites() {
     [customSites, persistSites]
   );
 
+  const updateSiteMode = useCallback(
+    (id: string, mode: CustomSiteMode) => {
+      const nextSites = customSites.map((site) => (site.id === id ? { ...site, mode } : site));
+      persistSites(nextSites);
+    },
+    [customSites, persistSites]
+  );
+
+  const updateSiteScope = useCallback(
+    (id: string, scope: SiteScope) => {
+      const nextSites = customSites.map((site) => (site.id === id ? { ...site, scope } : site));
+      persistSites(nextSites);
+    },
+    [customSites, persistSites]
+  );
+
+  const importSites = useCallback(
+    (raw: string) => {
+      const parsed = importRulesFromText(raw);
+      if (parsed.errors.length) {
+        setError(parsed.errors[0]);
+        return false;
+      }
+
+      const nextSites = dedupeCustomSites([...parsed.sites, ...customSites]).sort((a, b) =>
+        (a.label || a.host).localeCompare(b.label || b.host)
+      );
+      persistSites(nextSites);
+      setError('');
+      return true;
+    },
+    [customSites, persistSites]
+  );
+
+  const exportSites = useCallback(() => exportRulesToText(customSites), [customSites]);
+
   return {
     customSites,
     customUrl,
     error,
     durationMinutes,
+    customMode,
+    customScope,
     now,
     updateCustomUrl,
     addSite,
     removeSite,
     toggleSite,
     setDurationMinutes,
-    updateSiteDuration
+    setCustomMode,
+    setCustomScope,
+    updateSiteDuration,
+    updateSiteMode,
+    updateSiteScope,
+    exportSites,
+    importSites
   };
 }
 

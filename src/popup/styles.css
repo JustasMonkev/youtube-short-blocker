@@ -1,11 +1,138 @@
 @import "tailwindcss";
 @config "../../tailwind.config.js";
 
+:root {
+  color: #111827;
+  background:
+    radial-gradient(circle at top, rgba(244, 246, 255, 0.92), rgba(230, 233, 253, 0.8)),
+    linear-gradient(180deg, #f8fafc 0%, #eef2ff 100%);
+}
+
 body {
-  @apply m-0 p-0 w-[380px] bg-gradient-to-br from-gray-50 to-primary-50 dark:from-gray-900 dark:to-gray-800;
+  @apply m-0 p-0;
+  width: 340px;
+  min-width: 340px;
+  min-height: 0;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
 }
 
 #root {
-  @apply min-h-full p-2;
+  width: 340px;
+}
+
+.popup-shell {
+  box-sizing: border-box;
+  width: 340px;
+  padding: 14px;
+  display: grid;
+  gap: 12px;
+}
+
+.popup-brand {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 12px;
+  align-items: center;
+  padding: 12px 14px;
+  border-radius: 18px;
+  background: linear-gradient(135deg, #1f2937 0%, #312e81 100%);
+  color: #ffffff;
+  box-shadow: 0 16px 32px rgba(49, 46, 129, 0.26);
+}
+
+.popup-badge {
+  display: grid;
+  place-items: center;
+  width: 42px;
+  height: 42px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.16);
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+
+.popup-brand-copy {
+  min-width: 0;
+}
+
+.popup-kicker {
+  margin: 0 0 2px;
+  font-size: 11px;
+  line-height: 1.2;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.72);
+}
+
+.popup-title {
+  margin: 0;
+  font-size: 22px;
+  line-height: 1;
+  letter-spacing: -0.03em;
+  font-weight: 700;
+}
+
+.popup-stack {
+  display: grid;
+  gap: 10px;
+}
+
+.popup-stat {
+  display: grid;
+  gap: 4px;
+  padding: 14px;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.92);
+  border: 1px solid rgba(199, 210, 254, 0.8);
+  box-shadow: 0 10px 24px rgba(99, 102, 241, 0.08);
+}
+
+.popup-stat-label {
+  font-size: 11px;
+  line-height: 1.2;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #6b7280;
+}
+
+.popup-stat-value {
+  font-size: 34px;
+  line-height: 1;
+  font-weight: 800;
+  letter-spacing: -0.04em;
+  color: #4338ca;
+}
+
+.popup-action {
+  appearance: none;
+  border: none;
+  width: 100%;
+  padding: 12px 14px;
+  border-radius: 14px;
+  background: #5a67d8;
+  color: #ffffff;
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  cursor: pointer;
+  box-shadow: 0 10px 18px rgba(90, 103, 216, 0.24);
+  transition:
+    transform 120ms ease,
+    background 120ms ease,
+    box-shadow 120ms ease;
+}
+
+.popup-action:hover {
+  background: #4c51bf;
+}
+
+.popup-action:active {
+  transform: translateY(1px);
+}
+
+.popup-action:focus-visible {
+  outline: 2px solid #c7d2fe;
+  outline-offset: 2px;
 }

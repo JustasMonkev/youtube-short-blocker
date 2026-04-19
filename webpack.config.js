@@ -6,6 +6,7 @@ module.exports = {
   entry: {
     background: './src/background/background.ts',
     popup: './src/popup/index.tsx',
+    settings: './src/settings/index.tsx',
     content: './src/content/content.ts',
   },
   output: {
@@ -39,6 +40,11 @@ module.exports = {
       filename: 'popup.html',
       chunks: ['popup'],
     }),
+    new HtmlWebpackPlugin({
+      template: './src/popup/popup.html',
+      filename: 'settings.html',
+      chunks: ['settings'],
+    }),
     new CopyPlugin({
       patterns: [
         {
@@ -48,7 +54,10 @@ module.exports = {
             const manifest = JSON.parse(content.toString());
             // Update paths for built files
             manifest.background.service_worker = 'background.js';
-            manifest.action.default_popup = 'popup.html';
+            manifest.action = {
+              ...(manifest.action || {}),
+              default_popup: 'popup.html',
+            };
             return JSON.stringify(manifest, null, 2);
           }
         },

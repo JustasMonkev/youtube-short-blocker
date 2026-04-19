@@ -6,28 +6,31 @@
   "scripts": {
     "dev": "webpack --mode development --watch",
     "build": "webpack --mode production",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "clean": "rm -rf dist"
   },
   "devDependencies": {
-    "@tailwindcss/postcss": "^4.1.18",
-    "@types/chrome": "^0.1.32",
-    "@types/react": "^19.2.7",
+    "@tailwindcss/postcss": "^4.2.2",
+    "@types/chrome": "^0.1.40",
+    "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
-    "autoprefixer": "^10.4.23",
-    "copy-webpack-plugin": "^13.0.1",
-    "css-loader": "^7.1.2",
-    "html-webpack-plugin": "^5.6.5",
-    "postcss": "^8.5.6",
-    "postcss-loader": "^8.2.0",
+    "autoprefixer": "^10.5.0",
+    "copy-webpack-plugin": "^14.0.0",
+    "css-loader": "^7.1.4",
+    "html-webpack-plugin": "^5.6.6",
+    "postcss": "^8.5.10",
+    "postcss-loader": "^8.2.1",
     "style-loader": "^4.0.0",
-    "tailwindcss": "^4.1.18",
-    "ts-loader": "^9.5.4",
-    "typescript": "^5.9.3",
-    "webpack": "^5.104.1",
-    "webpack-cli": "^6.0.1"
+    "tailwindcss": "^4.2.2",
+    "ts-loader": "^9.5.7",
+    "typescript": "^6.0.2",
+    "vitest": "^4.1.4",
+    "webpack": "^5.106.2",
+    "webpack-cli": "^7.0.2"
   },
   "dependencies": {
-    "react": "^19.2.3",
-    "react-dom": "^19.2.3"
+    "react": "^19.2.5",
+    "react-dom": "^19.2.5"
   }
 }

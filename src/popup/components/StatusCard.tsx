@@ -2,15 +2,20 @@ import React from 'react';
 
 interface StatusCardProps {
   enabled: boolean;
+  reason: string;
+  reasonCode?: string;
+  cooldownMinutesLeft: number | null;
 }
 
-const StatusCard: React.FC<StatusCardProps> = ({ enabled }) => (
+const StatusCard: React.FC<StatusCardProps> = ({ enabled, reason, reasonCode, cooldownMinutesLeft }) => {
+  const cooldownSuffix =
+    (reasonCode ?? reason) === 'cooldown' && cooldownMinutesLeft !== null ? ` (${cooldownMinutesLeft}m left)` : '';
+
+  return (
   <div className="flex items-center justify-between p-4 bg-gradient-to-r from-primary-50 to-secondary-50 dark:from-gray-800 dark:to-gray-700 rounded-lg border border-primary-100 dark:border-gray-600">
     <div className="flex flex-col">
       <span className="text-xs uppercase tracking-wide text-gray-600 dark:text-gray-400">Global status</span>
-      <span className="text-sm text-gray-700 dark:text-gray-300">
-        {enabled ? 'Redirects and timers are active.' : 'Blocking is paused.'}
-      </span>
+      <span className="text-sm text-gray-700 dark:text-gray-300">{reason}{cooldownSuffix}</span>
     </div>
     <span
       className={`font-semibold px-3 py-1 rounded-full text-sm ${
@@ -23,5 +28,6 @@ const StatusCard: React.FC<StatusCardProps> = ({ enabled }) => (
     </span>
   </div>
 );
+};
 
 export default StatusCard;

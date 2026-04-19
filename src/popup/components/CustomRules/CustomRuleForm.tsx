@@ -1,12 +1,17 @@
 import React from 'react';
+import { CustomSiteMode, SiteScope } from '../../../types';
 
 interface CustomRuleFormProps {
   value: string;
   error: string;
   durationMinutes: number;
   durationOptions: { label: string; value: number }[];
+  mode: CustomSiteMode;
+  scope: SiteScope;
   onChange: (value: string) => void;
   onDurationChange: (value: number) => void;
+  onModeChange: (value: CustomSiteMode) => void;
+  onScopeChange: (value: SiteScope) => void;
   onSubmit: () => void;
 }
 
@@ -14,15 +19,32 @@ const CustomRuleForm: React.FC<CustomRuleFormProps> = ({
   value,
   error,
   durationMinutes,
+  mode,
+  scope,
   durationOptions,
   onChange,
   onDurationChange,
+  onModeChange,
+  onScopeChange,
   onSubmit
 }) => {
   const handleSubmit = (event: React.FormEvent) => {
     event.preventDefault();
     onSubmit();
   };
+
+  const modeOptions: { value: CustomSiteMode; label: string }[] = [
+    { value: 'block', label: 'Block' },
+    { value: 'disable_js', label: 'Disable JavaScript' },
+    { value: 'whitelist', label: 'Smart whitelist' }
+  ];
+
+  const scopeOptions: { value: SiteScope; label: string }[] = [
+    { value: 'all', label: 'All pages' },
+    { value: 'watch', label: 'Watch pages' },
+    { value: 'home', label: 'Home / feed' },
+    { value: 'search', label: 'Search pages' }
+  ];
 
   return (
     <>
@@ -40,6 +62,40 @@ const CustomRuleForm: React.FC<CustomRuleFormProps> = ({
             className="px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-primary-200"
             autoComplete="off"
           />
+        </div>
+        <div className="flex flex-col gap-2">
+          <label className="text-xs font-semibold text-gray-700 dark:text-gray-300" htmlFor="rule-mode">
+            Rule mode
+          </label>
+          <select
+            id="rule-mode"
+            value={mode}
+            onChange={(event) => onModeChange(event.target.value as CustomSiteMode)}
+            className="px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-primary-200"
+          >
+            {modeOptions.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="flex flex-col gap-2">
+          <label className="text-xs font-semibold text-gray-700 dark:text-gray-300" htmlFor="rule-scope">
+            Apply to scope
+          </label>
+          <select
+            id="rule-scope"
+            value={scope}
+            onChange={(event) => onScopeChange(event.target.value as SiteScope)}
+            className="px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-primary-200"
+          >
+            {scopeOptions.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
         </div>
         <div className="flex flex-col gap-2">
           <label className="text-xs font-semibold text-gray-700 dark:text-gray-300" htmlFor="block-duration">

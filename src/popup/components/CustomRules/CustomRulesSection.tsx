@@ -1,5 +1,5 @@
 import React from 'react';
-import { CustomSite } from '../../../types';
+import { CustomSite, CustomSiteMode, SiteScope } from '../../../types';
 import CustomRuleForm from './CustomRuleForm';
 import CustomRuleList from './CustomRuleList';
 
@@ -9,12 +9,20 @@ interface CustomRulesSectionProps {
   error: string;
   now: number;
   sites: CustomSite[];
+  customMode: CustomSiteMode;
+  customScope: SiteScope;
   onUrlChange: (value: string) => void;
   onDurationChange: (value: number) => void;
+  onModeChange: (value: CustomSiteMode) => void;
+  onScopeChange: (value: SiteScope) => void;
   onSubmit: () => void;
   onToggleSite: (id: string, checked: boolean) => void;
   onRemoveSite: (id: string) => void;
   onUpdateDuration: (id: string, minutes: number) => void;
+  onUpdateMode: (id: string, mode: CustomSiteMode) => void;
+  onUpdateScope: (id: string, scope: SiteScope) => void;
+  onExportRules: () => void;
+  onImportRules: (raw: string) => void;
 }
 
 const CustomRulesSection: React.FC<CustomRulesSectionProps> = ({
@@ -23,12 +31,20 @@ const CustomRulesSection: React.FC<CustomRulesSectionProps> = ({
   error,
   now,
   sites,
+  customMode,
+  customScope,
   onUrlChange,
   onDurationChange,
+  onModeChange,
+  onScopeChange,
   onSubmit,
   onToggleSite,
   onRemoveSite,
-  onUpdateDuration
+  onUpdateDuration,
+  onUpdateMode,
+  onUpdateScope,
+  onExportRules,
+  onImportRules
 }) => {
   const durationOptions = [
     { label: 'No timer', value: 0 },
@@ -47,13 +63,48 @@ const CustomRulesSection: React.FC<CustomRulesSectionProps> = ({
         </p>
       </div>
 
+      <div className="mb-4 grid gap-2 sm:grid-cols-2">
+        <button
+          type="button"
+          onClick={() => onExportRules()}
+          className="px-3 py-2 text-sm rounded-md bg-primary-500 text-white hover:bg-primary-600 active:scale-[0.99] transition-all"
+        >
+          Export rules
+        </button>
+        <label className="inline-flex items-center justify-center px-3 py-2 text-sm rounded-md border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-600 cursor-pointer">
+          Import rules
+          <input
+            type="file"
+            accept=".json,.txt"
+            className="hidden"
+            onChange={(event) => {
+              const file = event.target.files?.[0];
+              if (!file) {
+                return;
+              }
+
+              const reader = new FileReader();
+              reader.onload = () => {
+                onImportRules(String(reader.result || ''));
+                event.target.value = '';
+              };
+              reader.readAsText(file);
+            }}
+          />
+        </label>
+      </div>
+
       <CustomRuleForm
         value={customUrl}
         error={error}
         durationMinutes={durationMinutes}
         durationOptions={durationOptions}
+        mode={customMode}
+        scope={customScope}
         onChange={onUrlChange}
         onDurationChange={onDurationChange}
+        onModeChange={onModeChange}
+        onScopeChange={onScopeChange}
         onSubmit={onSubmit}
       />
       <CustomRuleList
@@ -63,6 +114,8 @@ const CustomRulesSection: React.FC<CustomRulesSectionProps> = ({
         onToggleSite={onToggleSite}
         onRemoveSite={onRemoveSite}
         onUpdateDuration={onUpdateDuration}
+        onUpdateMode={onUpdateMode}
+        onUpdateScope={onUpdateScope}
       />
     </section>
   );

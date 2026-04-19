@@ -1,4 +1,5 @@
-import { CustomSite, ParsedHost } from '../../types';
+import { CustomSite, CustomSiteMode, ParsedHost } from '../../types';
+import { SiteScope } from '../../types';
 
 export function parseHost(value: string): ParsedHost | null {
   let candidate = value.trim();
@@ -47,7 +48,9 @@ export function sanitizeSites(value: unknown): CustomSite[] {
         host,
         path,
         label,
-        mode: site.mode === 'disable_js' ? 'disable_js' : 'block',
+        isProtected: typeof site.isProtected === 'boolean' ? site.isProtected : false,
+        mode: site.mode === 'whitelist' ? 'whitelist' : site.mode === 'disable_js' ? 'disable_js' : 'block',
+        scope: normalizeSiteScope(site.scope),
         enabled: site.enabled !== false,
         expiresAt
       };
@@ -56,21 +59,31 @@ export function sanitizeSites(value: unknown): CustomSite[] {
     .filter((site): site is CustomSite => site !== null);
 }
 
-export function createCustomSite(parsed: ParsedHost): CustomSite {
+export function createCustomSite(
+  parsed: ParsedHost,
+  options:
+    | ({ mode: CustomSiteMode; scope: SiteScope; isProtected?: boolean } | Partial<{ mode: CustomSiteMode; scope: SiteScope; isProtected: boolean }>)
+    = {}
+): CustomSite {
   return {
     id: createId(),
     host: parsed.host,
     path: parsed.path || '',
     label: parsed.label,
-    mode: 'block',
+    mode: options.mode || 'block',
+    scope: options.scope || 'all',
+    isProtected: options.isProtected || false,
     enabled: true,
     expiresAt: null
   };
 }
 
 function createId(): string {
-  if (self.crypto && crypto.randomUUID) {
-    return crypto.randomUUID();
+  if (typeof globalThis !== 'undefined') {
+    const cryptoInstance = globalThis.crypto;
+    if (cryptoInstance && typeof cryptoInstance.randomUUID === 'function') {
+      return cryptoInstance.randomUUID();
+    }
   }
   return `site-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
 }
@@ -97,4 +110,12 @@ function normalizeExpiresAt(value: unknown): number | null {
     return null;
   }
   return Number.isFinite(value) ? value : null;
+}
+
+function normalizeSiteScope(value: unknown): SiteScope {
+  if (value === 'home' || value === 'watch' || value === 'search') {
+    return value;
+  }
+
+  return 'all';
 }

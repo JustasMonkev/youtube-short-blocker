@@ -1,5 +1,5 @@
 import React from 'react';
-import { CustomSite } from '../../../types';
+import { CustomSite, CustomSiteMode, SiteScope } from '../../../types';
 import CustomRuleItem from './CustomRuleItem';
 
 interface CustomRuleListProps {
@@ -9,6 +9,8 @@ interface CustomRuleListProps {
   onToggleSite: (id: string, checked: boolean) => void;
   onRemoveSite: (id: string) => void;
   onUpdateDuration: (id: string, minutes: number) => void;
+  onUpdateMode: (id: string, mode: CustomSiteMode) => void;
+  onUpdateScope: (id: string, scope: SiteScope) => void;
 }
 
 const CustomRuleList: React.FC<CustomRuleListProps> = ({
@@ -17,7 +19,9 @@ const CustomRuleList: React.FC<CustomRuleListProps> = ({
   durationOptions,
   onToggleSite,
   onRemoveSite,
-  onUpdateDuration
+  onUpdateDuration,
+  onUpdateMode,
+  onUpdateScope
 }) => (
   <ul className="flex flex-col gap-2">
     {sites.length === 0 ? (
@@ -32,6 +36,8 @@ const CustomRuleList: React.FC<CustomRuleListProps> = ({
           onToggle={(checked) => onToggleSite(site.id, checked)}
           onRemove={() => onRemoveSite(site.id)}
           onDurationChange={(minutes) => onUpdateDuration(site.id, minutes)}
+          onModeChange={(mode) => onUpdateMode(site.id, mode)}
+          onScopeChange={(scope) => onUpdateScope(site.id, scope)}
         />
       ))
     )}

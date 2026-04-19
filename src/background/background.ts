@@ -1,51 +1,163 @@
-import { CustomSite, StorageChanges } from '../types';
+import {
+  BlockingDiagnostics,
+  CustomSite,
+  ScheduleWindow,
+  ShortActivitySummary,
+  StorageChanges
+} from '../types';
+import {
+  expireFinishedTimers,
+  getNextExpiryTime,
+  isSiteActive,
+  normalizeHost,
+  normalizePath,
+  sanitizeSites
+} from './utils';
+import {
+  isBlockedBySite,
+  isInCooldown,
+  isWhitelistedUrl,
+  isWithinScheduleWindow
+} from './blockingHelpers';
+import { incrementBlockedCountByDay, normalizeBlockedCountByDay } from './statsHelpers';
 
 const CUSTOM_RULE_START = 1000;
 const MAX_CUSTOM_RULES = 400;
-const EXPIRY_ALARM_NAME = 'customSiteExpiry';
+const SITE_EXPIRY_ALARM_NAME = 'customSiteExpiry';
+const COOLDOWN_ALARM_NAME = 'globalCooldownExpiry';
+const SCHEDULE_WINDOW_ALARM_NAME = 'scheduleWindowTransition';
+
+const DEFAULT_SHORT_ACTIVITY_SUMMARY: ShortActivitySummary = {
+  blockedTotal: 0,
+  lastBlockedAt: null,
+  whitelistSkips: 0,
+  cooldownSkips: 0,
+  scheduleSkips: 0
+};
+
+const DEFAULT_BLOCKING_DIAGNOSTICS: BlockingDiagnostics = {
+  lastCheckedAt: null,
+  lastCheckedUrl: null,
+  lastDecision: 'allowed',
+  lastReason: 'disabled',
+  activeRules: 0
+};
 
 let blockingEnabled = true;
+let emergencyMode = false;
+let globalCooldownUntil: number | null = null;
+let scheduleWindow: ScheduleWindow | null = null;
 let cachedCustomSites: CustomSite[] = [];
+let blockedCountByDay: Record<string, number> = {};
+let shortActivitySummary: ShortActivitySummary = { ...DEFAULT_SHORT_ACTIVITY_SUMMARY };
+let blockingDiagnostics: BlockingDiagnostics = { ...DEFAULT_BLOCKING_DIAGNOSTICS };
 
 initializeState();
 
 chrome.runtime.onInstalled.addListener(() => {
-  chrome.storage.sync.get(['enabled', 'blockedCount', 'customSites'], (result) => {
-    const defaults: Partial<{ enabled: boolean; blockedCount: number; customSites: CustomSite[] }> = {};
+  chrome.storage.sync.get(
+    [
+      'enabled',
+      'blockedCount',
+      'customSites',
+      'blockedCountByDay',
+      'globalCooldownUntil',
+      'emergencyMode',
+      'scheduleWindow',
+      'shortActivitySummary',
+      'blockingDiagnostics'
+    ],
+    (result) => {
+      const defaults: {
+        enabled?: boolean;
+        blockedCount?: number;
+        customSites?: CustomSite[];
+        blockedCountByDay?: Record<string, number>;
+        globalCooldownUntil?: number | null;
+        emergencyMode?: boolean;
+        scheduleWindow?: ScheduleWindow | null;
+        shortActivitySummary?: ShortActivitySummary;
+        blockingDiagnostics?: BlockingDiagnostics;
+      } = {};
 
-    if (typeof result.enabled === 'undefined') {
-      defaults.enabled = true;
-    }
-    if (typeof result.blockedCount === 'undefined') {
-      defaults.blockedCount = 0;
-    }
-    if (!Array.isArray(result.customSites)) {
-      defaults.customSites = [];
-    }
+      if (typeof result.enabled === 'undefined') {
+        defaults.enabled = true;
+      }
+      if (typeof result.blockedCount === 'undefined') {
+        defaults.blockedCount = 0;
+      }
+      if (!isValidBlockedCountByDay(result.blockedCountByDay)) {
+        defaults.blockedCountByDay = {};
+      }
+      if (!Array.isArray(result.customSites)) {
+        defaults.customSites = [];
+      }
+      if (typeof result.globalCooldownUntil === 'undefined') {
+        defaults.globalCooldownUntil = null;
+      }
+      if (typeof result.emergencyMode !== 'boolean') {
+        defaults.emergencyMode = false;
+      }
+      if (!isValidScheduleWindow(result.scheduleWindow)) {
+        defaults.scheduleWindow = null;
+      }
+      if (!isValidShortActivitySummary(result.shortActivitySummary)) {
+        defaults.shortActivitySummary = DEFAULT_SHORT_ACTIVITY_SUMMARY;
+      }
+      if (!isValidBlockingDiagnostics(result.blockingDiagnostics)) {
+        defaults.blockingDiagnostics = DEFAULT_BLOCKING_DIAGNOSTICS;
+      }
 
-    if (Object.keys(defaults).length) {
-      chrome.storage.sync.set(defaults);
+      if (Object.keys(defaults).length) {
+        chrome.storage.sync.set(defaults);
+      }
     }
-  });
-});
+  );
+	});
 
 chrome.runtime.onStartup.addListener(() => {
   initializeState();
 });
 
 chrome.alarms.onAlarm.addListener((alarm) => {
-  if (alarm.name !== EXPIRY_ALARM_NAME) {
+  if (
+    alarm.name !== SITE_EXPIRY_ALARM_NAME &&
+    alarm.name !== COOLDOWN_ALARM_NAME &&
+    alarm.name !== SCHEDULE_WINDOW_ALARM_NAME
+  ) {
     return;
   }
   syncControls();
 });
 
 function initializeState(): void {
-  chrome.storage.sync.get(['enabled', 'customSites'], (result) => {
-    blockingEnabled = result.enabled !== false;
-    cachedCustomSites = sanitizeSites(result.customSites);
-    syncControls();
-  });
+  chrome.storage.sync.get(
+    [
+      'enabled',
+      'customSites',
+      'blockedCountByDay',
+      'globalCooldownUntil',
+      'emergencyMode',
+      'scheduleWindow',
+      'shortActivitySummary',
+      'blockingDiagnostics'
+    ],
+    (result) => {
+      blockingEnabled = result.enabled !== false;
+      cachedCustomSites = sanitizeSites(result.customSites);
+      blockedCountByDay = normalizeBlockedCountByDay(result.blockedCountByDay);
+      globalCooldownUntil = normalizeOptionalNumberOrNull(result.globalCooldownUntil);
+      emergencyMode = result.emergencyMode === true;
+      scheduleWindow = isValidScheduleWindow(result.scheduleWindow) ? result.scheduleWindow : null;
+      shortActivitySummary = isValidShortActivitySummary(result.shortActivitySummary)
+        ? { ...result.shortActivitySummary }
+        : { ...DEFAULT_SHORT_ACTIVITY_SUMMARY };
+      blockingDiagnostics = isValidBlockingDiagnostics(result.blockingDiagnostics)
+        ? { ...result.blockingDiagnostics }
+        : { ...DEFAULT_BLOCKING_DIAGNOSTICS };
+      syncControls();
+    }
+  );
 }
 
 chrome.storage.onChanged.addListener((changes: StorageChanges, areaName: string) => {
@@ -57,8 +169,38 @@ chrome.storage.onChanged.addListener((changes: StorageChanges, areaName: string)
     cachedCustomSites = sanitizeSites(changes.customSites.newValue);
   }
 
+  if (changes.blockedCountByDay) {
+    blockedCountByDay = normalizeBlockedCountByDay(changes.blockedCountByDay.newValue);
+  }
+
   if (changes.enabled) {
     blockingEnabled = changes.enabled.newValue !== false;
+  }
+
+  if (changes.globalCooldownUntil) {
+    globalCooldownUntil = normalizeOptionalNumberOrNull(changes.globalCooldownUntil.newValue);
+  }
+
+  if (changes.emergencyMode) {
+    emergencyMode = changes.emergencyMode.newValue === true;
+  }
+
+  if (changes.scheduleWindow) {
+    scheduleWindow = isValidScheduleWindow(changes.scheduleWindow.newValue)
+      ? changes.scheduleWindow.newValue
+      : null;
+  }
+
+  if (changes.shortActivitySummary) {
+    shortActivitySummary = isValidShortActivitySummary(changes.shortActivitySummary.newValue)
+      ? { ...changes.shortActivitySummary.newValue }
+      : { ...DEFAULT_SHORT_ACTIVITY_SUMMARY };
+  }
+
+  if (changes.blockingDiagnostics) {
+    blockingDiagnostics = isValidBlockingDiagnostics(changes.blockingDiagnostics.newValue)
+      ? { ...changes.blockingDiagnostics.newValue }
+      : { ...DEFAULT_BLOCKING_DIAGNOSTICS };
   }
 
   syncControls();
@@ -67,55 +209,149 @@ chrome.storage.onChanged.addListener((changes: StorageChanges, areaName: string)
 function syncControls(): void {
   const now = Date.now();
   const { sites, changed } = expireFinishedTimers(cachedCustomSites, now);
+  const hasCooldownExpired = globalCooldownUntil !== null && globalCooldownUntil <= now;
 
   cachedCustomSites = sites;
+
+  const updates: Record<string, unknown> = {};
+
   if (changed) {
-    chrome.storage.sync.set({ customSites: sites });
+    updates.customSites = sites;
+  }
+
+  if (hasCooldownExpired) {
+    globalCooldownUntil = null;
+    updates.globalCooldownUntil = null;
+  }
+
+  if (Object.keys(updates).length) {
+    chrome.storage.sync.set(updates);
   }
 
   applyCustomControls(now);
-  scheduleNextExpiry(sites, now);
+  scheduleNextChecks(sites, now);
 }
 
 function applyCustomControls(now = Date.now()): void {
-  const activeSites = blockingEnabled
-    ? cachedCustomSites.filter((site) => isSiteActive(site, now))
+  const shouldBlock = isBlockingEnabled(now);
+  const activeSites = shouldBlock
+    ? cachedCustomSites.filter((site) => site.mode !== 'whitelist' && isSiteActive(site, now))
     : [];
+  const activeRules = activeSites.slice(0, MAX_CUSTOM_RULES).length;
 
+  if (blockingDiagnostics.activeRules !== activeRules) {
+    blockingDiagnostics.activeRules = activeRules;
+    chrome.storage.sync.set({ blockingDiagnostics });
+  }
   updateDynamicRulesForSites(activeSites);
 }
 
-chrome.webNavigation.onHistoryStateUpdated.addListener(
-  (details) => {
-    if (details.frameId !== 0) return;
-    if (!blockingEnabled) return;
+chrome.webNavigation.onHistoryStateUpdated.addListener((details) => {
+  if (details.frameId !== 0 || !details.url) {
+    return;
+  }
 
-    const matchedSite = cachedCustomSites.find(
-      (site) => site.mode === 'block' && isSiteActive(site) && urlMatchesSite(details.url, site)
+  const now = Date.now();
+
+  if (!isBlockingEnabled(now)) {
+    if (isInCooldown(now, globalCooldownUntil)) {
+      shortActivitySummary.cooldownSkips += 1;
+      recordDecision({
+        now,
+        url: details.url,
+        decision: 'skipped',
+        reason: 'cooldown'
+      });
+    } else if (!isWithinScheduleWindow(now, scheduleWindow)) {
+      shortActivitySummary.scheduleSkips += 1;
+      recordDecision({
+        now,
+        url: details.url,
+        decision: 'skipped',
+        reason: 'scheduleWindow'
+      });
+    } else {
+      recordDecision({
+        now,
+        url: details.url,
+        decision: 'allowed',
+        reason: 'disabled'
+      });
+    }
+    return;
+  }
+
+  if (isWhitelistedUrl(details.url, cachedCustomSites, now)) {
+    shortActivitySummary.whitelistSkips += 1;
+    recordDecision({
+      now,
+      url: details.url,
+      decision: 'allowed',
+      reason: 'whitelisted'
+    });
+    return;
+  }
+
+  const matchedSite = cachedCustomSites.find((site) => isBlockedBySite(details.url, site, now));
+
+  if (!matchedSite) {
+    return;
+  }
+
+  chrome.storage.sync.get(['blockedCount', 'blockedCountByDay'], (result) => {
+    const newCount = Number(result.blockedCount || 0) + 1;
+    const updatedBlockedCountByDay = incrementBlockedCountByDay(
+      result.blockedCountByDay as Record<string, number> | undefined,
+      now
     );
 
-    if (!matchedSite) {
-      return;
-    }
+    blockedCountByDay = { ...updatedBlockedCountByDay };
 
-    chrome.storage.sync.get(['blockedCount'], (result) => {
-      const newCount = Number(result.blockedCount || 0) + 1;
-      chrome.storage.sync.set({ blockedCount: newCount });
+    shortActivitySummary.blockedTotal += 1;
+    shortActivitySummary.lastBlockedAt = now;
+    chrome.storage.sync.set({
+      blockedCount: newCount,
+      blockedCountByDay,
+      shortActivitySummary
     });
+  });
 
-    const fallbackUrl = createFallbackUrl(details.url);
-    chrome.tabs.update(details.tabId, { url: fallbackUrl });
+  recordDecision({
+    now,
+    url: details.url,
+    decision: 'blocked',
+    reason: 'ruleBlock'
+  });
+
+  const fallbackUrl = createFallbackUrl(details.url);
+  chrome.tabs.update(details.tabId, { url: fallbackUrl });
+});
+
+function isBlockingEnabled(now = Date.now()): boolean {
+  if (!blockingEnabled || emergencyMode) {
+    return false;
   }
-);
+
+  if (isInCooldown(now, globalCooldownUntil)) {
+    return false;
+  }
+
+  if (!isWithinScheduleWindow(now, scheduleWindow)) {
+    return false;
+  }
+
+  return true;
+}
 
 function updateDynamicRulesForSites(sites: CustomSite[]): void {
-  const blockSites = sites.filter((site) => site.mode === 'block');
-  const addRules = blockSites.slice(0, MAX_CUSTOM_RULES).map((site, index) => ({
-    id: CUSTOM_RULE_START + index,
-    priority: 1,
-    action: { type: chrome.declarativeNetRequest.RuleActionType.BLOCK },
-    condition: buildRuleCondition(site)
-  }));
+  const addRules = sites
+    .filter((site) => site.mode === 'block' || site.mode === 'disable_js')
+    .map((site, index) => ({
+      id: CUSTOM_RULE_START + index,
+      priority: 1,
+      action: { type: chrome.declarativeNetRequest.RuleActionType.BLOCK },
+      condition: buildRuleCondition(site)
+    }));
 
   const removeRuleIds = Array.from({ length: MAX_CUSTOM_RULES }, (_, idx) => CUSTOM_RULE_START + idx);
 
@@ -126,98 +362,36 @@ function updateDynamicRulesForSites(sites: CustomSite[]): void {
   });
 }
 
-function sanitizeSites(value: any): CustomSite[] {
-  if (!Array.isArray(value)) {
-    return [];
+function scheduleNextChecks(sites: CustomSite[], now: number = Date.now()): void {
+  const nextExpiryTime = getNextExpiryTime(sites, now);
+  if (nextExpiryTime) {
+    chrome.alarms.create(SITE_EXPIRY_ALARM_NAME, { when: nextExpiryTime + 1000, periodInMinutes: 1 });
+  } else {
+    chrome.alarms.clear(SITE_EXPIRY_ALARM_NAME);
   }
 
-  return value
-    .map((site, index) => {
-      if (typeof site === 'string') {
-        const host = site.toLowerCase();
-        const sanitizedSite: CustomSite = {
-          id: `${host}-${index}`,
-          host,
-          path: '',
-          label: host,
-          mode: 'block',
-          enabled: true,
-          expiresAt: null
-        };
-        return sanitizedSite;
-      }
-
-      if (!site || !site.host) {
-        return null;
-      }
-
-      const host = normalizeHost(site.host);
-      const path = normalizePath(site.path);
-      const label = site.label || (path ? `${host}${path}` : host);
-      const expiresAt = normalizeExpiresAt(site.expiresAt);
-
-      if (!host) {
-        return null;
-      }
-
-      const sanitizedSite: CustomSite = {
-        id: site.id || `${host}-${index}`,
-        host,
-        path,
-        label,
-        mode: site.mode === 'disable_js' ? 'disable_js' : 'block',
-        enabled: site.enabled !== false,
-        expiresAt
-      };
-      return sanitizedSite;
-    })
-    .filter((site): site is CustomSite => site !== null);
-}
-
-function isSiteActive(site: CustomSite, now: number = Date.now()): boolean {
-  return site.enabled && (!site.expiresAt || site.expiresAt > now);
-}
-
-function expireFinishedTimers(
-  sites: CustomSite[],
-  now: number
-): { sites: CustomSite[]; changed: boolean } {
-  let changed = false;
-
-  const nextSites = sites.map((site) => {
-    if (site.enabled && site.expiresAt && site.expiresAt <= now) {
-      changed = true;
-      return { ...site, enabled: false, expiresAt: null };
-    }
-    return site;
-  });
-
-  return { sites: nextSites, changed };
-}
-
-function scheduleNextExpiry(sites: CustomSite[], now: number = Date.now()): void {
-  const upcoming = sites
-    .filter((site) => site.enabled && typeof site.expiresAt === 'number' && site.expiresAt > now)
-    .map((site) => site.expiresAt as number);
-
-  if (!upcoming.length) {
-    chrome.alarms.clear(EXPIRY_ALARM_NAME);
-    return;
+  if (globalCooldownUntil && globalCooldownUntil > now) {
+    chrome.alarms.create(COOLDOWN_ALARM_NAME, { when: globalCooldownUntil + 1 });
+  } else {
+    chrome.alarms.clear(COOLDOWN_ALARM_NAME);
   }
 
-  const soonest = Math.min(...upcoming);
-  // Keep a periodic alarm so timers are re-checked even if a single wakeup is missed.
-  chrome.alarms.create(EXPIRY_ALARM_NAME, { when: soonest + 1000, periodInMinutes: 1 });
+  const nextTransitionAt = getNextScheduleTransitionAt(now, scheduleWindow);
+  if (nextTransitionAt) {
+    chrome.alarms.create(SCHEDULE_WINDOW_ALARM_NAME, { when: nextTransitionAt });
+  } else {
+    chrome.alarms.clear(SCHEDULE_WINDOW_ALARM_NAME);
+  }
 }
 
 function buildRuleCondition(site: CustomSite): chrome.declarativeNetRequest.RuleCondition {
   const normalizedHost = normalizeHost(site.host);
   const normalizedPath = normalizePath(site.path);
   const escapedHost = escapeForRegex(normalizedHost);
+  const scope = isYouTubeHost(normalizedHost) ? site.scope || 'all' : 'all';
+  const scopePath = buildRulePathPattern(scope, normalizedPath);
 
-  const regexFilter = normalizedPath
-    ? `^https?://([\\w-]+\\.)*${escapedHost}${escapeForRegex(normalizedPath)}.*`
-    : `^https?://([\\w-]+\\.)*${escapedHost}(/.*)?$`;
+  const regexFilter = `^https?://([\\w-]+\\.)*${escapedHost}${scopePath}(?:\\?.*)?$`;
 
   return {
     regexFilter,
@@ -231,29 +405,22 @@ function buildRuleCondition(site: CustomSite): chrome.declarativeNetRequest.Rule
   };
 }
 
-function urlMatchesSite(candidate: string, site: CustomSite): boolean {
-  try {
-    const url = new URL(candidate);
-    if (!domainMatches(url.hostname, site.host)) {
-      return false;
-    }
-
-    if (!site.path) {
-      return true;
-    }
-
-    const path = normalizePath(site.path);
-    return url.pathname.startsWith(path);
-  } catch (error) {
-    console.error('Failed to parse URL for matching', candidate, error);
-    return false;
+function buildRulePathPattern(scope: 'all' | 'home' | 'watch' | 'search', path: string): string {
+  if (scope === 'watch') {
+    const watchPrefix = path ? `/watch${path}` : '/watch';
+    return `${escapeForRegex(watchPrefix)}(?:/.*)?`;
   }
-}
 
-function domainMatches(currentHost: string, targetHost: string): boolean {
-  const normalizedCurrent = normalizeHost(currentHost);
-  const normalizedTarget = normalizeHost(targetHost);
-  return normalizedCurrent === normalizedTarget || normalizedCurrent.endsWith(`.${normalizedTarget}`);
+  if (scope === 'search') {
+    const searchPrefix = path ? `/results${path}` : '/results';
+    return `${escapeForRegex(searchPrefix)}(?:/.*)?`;
+  }
+
+  if (scope === 'home' && !path) {
+    return '(?:/|/feed(?:/.*)?)';
+  }
+
+  return path ? `${escapeForRegex(path)}(?:/.*)?` : '(/.*)?';
 }
 
 function createFallbackUrl(original: string): string {
@@ -265,30 +432,127 @@ function createFallbackUrl(original: string): string {
   }
 }
 
-function normalizeHost(host: string): string {
-  const trimmed = String(host || '').trim().toLowerCase();
-  if (!trimmed) {
-    return '';
-  }
-  return trimmed.startsWith('www.') ? trimmed.slice(4) : trimmed;
-}
-
-function normalizePath(value?: string): string {
-  if (!value || value === '/') {
-    return '';
-  }
-
-  const path = String(value);
-  return path.startsWith('/') ? path : `/${path}`;
-}
-
-function normalizeExpiresAt(value: unknown): number | null {
-  if (typeof value !== 'number') {
+function getNextScheduleTransitionAt(now: number, scheduleWindow: ScheduleWindow | null): number | null {
+  if (!scheduleWindow || scheduleWindow.startMinute === scheduleWindow.endMinute) {
     return null;
   }
-  return Number.isFinite(value) ? value : null;
+
+  const isWindowActive = isWithinScheduleWindow(now, scheduleWindow);
+  const minuteStart = now - (now % 60000);
+
+  for (let offsetMinutes = 1; offsetMinutes <= 1440; offsetMinutes += 1) {
+    const candidate = minuteStart + offsetMinutes * 60_000;
+    if (isWithinScheduleWindow(candidate, scheduleWindow) !== isWindowActive) {
+      return candidate;
+    }
+  }
+
+  return null;
+}
+
+function recordDecision(params: {
+  now: number;
+  url: string;
+  decision: BlockingDiagnostics['lastDecision'];
+  reason: BlockingDiagnostics['lastReason'];
+}): void {
+  blockingDiagnostics.lastCheckedAt = params.now;
+  blockingDiagnostics.lastCheckedUrl = params.url;
+  blockingDiagnostics.lastDecision = params.decision;
+  blockingDiagnostics.lastReason = params.reason;
+  chrome.storage.sync.set({
+    shortActivitySummary,
+    blockingDiagnostics
+  });
+}
+
+function normalizeOptionalNumberOrNull(value: unknown): number | null {
+  if (value === null) {
+    return null;
+  }
+
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+function isValidScheduleWindow(value: unknown): value is ScheduleWindow {
+  if (!value || typeof value !== 'object') {
+    return false;
+  }
+
+  const candidate = value as Partial<ScheduleWindow>;
+  return (
+    isValidMinute(candidate.startMinute) &&
+    isValidMinute(candidate.endMinute)
+  );
+}
+
+function isValidBlockedCountByDay(value: unknown): value is Record<string, number> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return false;
+  }
+
+  const entries = value as Record<string, unknown>;
+  return Object.values(entries).every(
+    (count) => Number.isFinite(Number(count)) && Number.isInteger(Number(count)) && Number(count) >= 0
+  );
+}
+
+function isValidMinute(value: unknown): value is number {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 0 && value < 1440;
+}
+
+function isValidShortActivitySummary(value: unknown): value is ShortActivitySummary {
+  if (!value || typeof value !== 'object') {
+    return false;
+  }
+
+  const summary = value as Partial<ShortActivitySummary>;
+  return (
+    typeof summary.blockedTotal === 'number' &&
+    Number.isInteger(summary.blockedTotal) &&
+    summary.blockedTotal >= 0 &&
+    (summary.lastBlockedAt === null || (typeof summary.lastBlockedAt === 'number' && Number.isFinite(summary.lastBlockedAt))) &&
+    typeof summary.whitelistSkips === 'number' &&
+    Number.isInteger(summary.whitelistSkips) &&
+    summary.whitelistSkips >= 0 &&
+    typeof summary.cooldownSkips === 'number' &&
+    Number.isInteger(summary.cooldownSkips) &&
+    summary.cooldownSkips >= 0 &&
+    typeof summary.scheduleSkips === 'number' &&
+    Number.isInteger(summary.scheduleSkips) &&
+    summary.scheduleSkips >= 0
+  );
+}
+
+function isValidBlockingDiagnostics(value: unknown): value is BlockingDiagnostics {
+  if (!value || typeof value !== 'object') {
+    return false;
+  }
+
+  const diagnostics = value as Partial<BlockingDiagnostics>;
+  return (
+    diagnostics.lastCheckedAt === null ||
+    (typeof diagnostics.lastCheckedAt === 'number' && Number.isFinite(diagnostics.lastCheckedAt))
+  ) &&
+    (diagnostics.lastCheckedUrl === null || typeof diagnostics.lastCheckedUrl === 'string') &&
+    (diagnostics.lastDecision === 'allowed' ||
+      diagnostics.lastDecision === 'blocked' ||
+      diagnostics.lastDecision === 'skipped') &&
+    (diagnostics.lastReason === 'disabled' ||
+      diagnostics.lastReason === 'cooldown' ||
+      diagnostics.lastReason === 'scheduleWindow' ||
+      diagnostics.lastReason === 'whitelisted' ||
+      diagnostics.lastReason === 'ruleBlock' ||
+      diagnostics.lastReason === 'error') &&
+    typeof diagnostics.activeRules === 'number' &&
+    Number.isInteger(diagnostics.activeRules) &&
+    diagnostics.activeRules >= 0;
 }
 
 function escapeForRegex(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function isYouTubeHost(host: string): boolean {
+  return host === 'youtube.com' || host.endsWith('.youtube.com');
 }
