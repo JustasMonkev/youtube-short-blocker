@@ -1,85 +1,141 @@
 # YouTube Shorts Blocker
 
-A Chrome/Edge extension that keeps you off YouTube Shorts and other distracting sites with a master toggle, redirects, and timed block rules.
+A Chrome/Edge extension for blocking YouTube Shorts and other distracting sites with a lightweight popup, a full settings dashboard, timed rules, and focus-hour controls.
 
-## What it does
+## Current UX
 
-- Redirects any `youtube.com/shorts/...` visit to the YouTube home page when blocking is on.
-- Global master switch pauses/resumes both Shorts redirects and every custom rule.
-- Custom blocklist for whole domains or specific paths (for example `x.com` or `youtube.com/shorts`), with per-site toggles and remove.
-- Optional timers per site to automatically turn a block off after 15m/1h/4h/1d when adding or updating a site.
-- Network-level blocking for custom sites via `declarativeNetRequest`, plus a SPA fallback redirect that also increments the counter shown in the popup.
-- Stores settings, timers, and counts in Chrome Sync so the same list follows you across devices (up to 400 custom block rules).
+- The extension icon opens a small popup that shows:
+  - `Global status`
+  - `Redirects prevented`
+  - `Open settings`
+- `Open settings` launches the full dashboard in a normal browser tab at `settings.html`.
+- All configuration lives in the settings tab, not in the popup.
 
-## How it works
+## Features
 
-- **Content script (YouTube only):** Runs at `document_start`, listens for `yt-navigate-finish`, `popstate`, and URL changes via `MutationObserver`, and replaces Shorts URLs with `https://www.youtube.com` when the master toggle is enabled.
-- **Background service worker:** Loads the `enabled` state and saved sites, applies timers with `chrome.alarms`, builds dynamic `declarativeNetRequest` rules for active sites, and uses `webNavigation.onHistoryStateUpdated` as a fallback to redirect SPA navigations to the site root while incrementing `blockedCount`.
-- **Popup UI:** Lets you toggle blocking globally, add/remove/toggle sites, attach timers, and reset the counter. Changes are stored in `chrome.storage.sync` and picked up by both the content script and background worker.
+- Redirects `youtube.com/shorts/...` visits away from Shorts when blocking is active.
+- Supports custom rules for full domains or specific paths such as `x.com`, `reddit.com`, or `youtube.com/shorts`.
+- Includes multiple rule modes:
+  - `Block`
+  - `Disable JavaScript`
+  - `Smart whitelist`
+- Lets you scope rules to:
+  - all pages
+  - home/feed pages
+  - watch pages
+  - search pages
+- Supports optional timers on custom rules so they can expire automatically.
+- Includes a temporary global pause for quick cooldowns.
+- Includes a schedule window for focus hours.
+- Includes an emergency mode override.
+- Tracks blocked redirects and daily totals.
+- Shows diagnostics for storage, permissions, active rules, and the last blocking decision.
+- Supports import/export for custom rules.
+- Persists settings in `chrome.storage.sync`.
+
+## How It Works
+
+- **Action popup:** A compact status surface for quick checks and a fast path into settings.
+- **Settings page:** The full dashboard for schedules, cooldowns, custom rules, timers, diagnostics, and summaries.
+- **Background service worker:** Maintains extension state, manages alarms for expiring rules and schedule transitions, applies dynamic blocking rules, and records redirect stats.
+- **Content script:** Watches YouTube navigation and prevents Shorts loads early in the page lifecycle.
 
 ### Architecture Diagram
 
 ```mermaid
 graph TD
-    User[User] -->|Navigates| Browser[Browser]
+    User[User] -->|Clicks extension icon| Popup[Popup UI]
+    Popup -->|Open settings| Settings[Settings tab]
 
     subgraph Extension
         direction TB
 
-        subgraph Popup["Popup UI"]
-            UI_Toggle[Master toggle]
-            UI_Add[Add site + timer]
-            UI_Reset[Reset counter]
+        subgraph PopupSurface["Popup"]
+            PopupStatus[Global status]
+            PopupCount[Redirects prevented]
+            PopupButton[Open settings]
+        end
+
+        subgraph SettingsSurface["Settings Dashboard"]
+            SettingsControls[Cooldown + schedule + emergency mode]
+            SettingsRules[Custom rules + timers]
+            SettingsStats[Daily summary + diagnostics]
         end
 
         subgraph Background["Background Service Worker"]
-            BG_Load[Load storage + timers]
-            BG_Alarms[Alarm checks for expiry]
-            BG_DNR[declarativeNetRequest rules]
-            BG_Nav[webNavigation fallback redirect + counter]
+            BGState[Load and sync state]
+            BGAlarms[Cooldown and expiry alarms]
+            BGRules[Dynamic blocking rules]
+            BGStats[Redirect counters and diagnostics]
         end
 
-        subgraph Content["Content Script (YouTube)"]
-            CS_Event[yt-navigate-finish / popstate / MutationObserver]
-            CS_Check{URL has /shorts/ and enabled?}
-            CS_Redirect[Replace with youtube.com]
-            CS_Allow[Allow navigation]
+        subgraph Content["YouTube Content Script"]
+            CSObserve[Observe YouTube navigation]
+            CSCheck{Shorts URL and blocking active?}
+            CSRedirect[Redirect away from Shorts]
+            CSAllow[Allow navigation]
         end
     end
 
-    UI_Toggle --> BG_Load
-    UI_Add --> BG_Load
-    UI_Reset --> BG_Load
-    BG_Load --> BG_DNR
-    BG_Load --> BG_Alarms
-    BG_Alarms --> BG_DNR
+    Popup --> PopupStatus
+    Popup --> PopupCount
+    Popup --> PopupButton
+    PopupButton --> Settings
 
-    Browser -->|Network request| BG_DNR
-    Browser -->|History update| BG_Nav
-    Browser -->|Page load| CS_Event
+    Settings --> SettingsControls
+    Settings --> SettingsRules
+    Settings --> SettingsStats
 
-    CS_Event --> CS_Check
-    CS_Check -->|Yes| CS_Redirect
-    CS_Check -->|No| CS_Allow
+    SettingsControls --> BGState
+    SettingsRules --> BGState
+    BGState --> BGAlarms
+    BGState --> BGRules
+    BGRules --> BGStats
+
+    User -->|Navigates YouTube| CSObserve
+    CSObserve --> CSCheck
+    CSCheck -->|Yes| CSRedirect
+    CSCheck -->|No| CSAllow
+    CSRedirect --> BGStats
 ```
 
-## Using the popup
+## Using the Extension
 
-- Flip the master toggle to turn all blocking on or off.
-- Add a domain or path (for example `tiktok.com` or `youtube.com/shorts`) and pick a duration if you want the block to auto-disable later.
-- Toggle or remove any saved site, or set a new timer with the quick buttons or dropdown.
-- The counter shows SPA redirects handled by the fallback and can be reset with the button at the bottom.
+### Popup
+
+- Click the extension icon to see whether blocking is currently active.
+- Check the running `Redirects prevented` count.
+- Use `Open settings` to move into the full dashboard.
+
+### Settings
+
+- Add a website or path to block.
+- Choose a rule mode and scope for that site.
+- Set an optional timer for temporary blocks.
+- Apply a temporary global pause when you need a short break.
+- Set a daily schedule window for focus hours.
+- Toggle emergency mode when you need to bypass normal blocking behavior.
+- Export or import rules.
+- Review the daily redirect summary and diagnostics cards.
 
 ## Installation
 
 1. Clone or download this repository.
-2. Run `npm install` or `yarn` to install dependencies.
-3. Run `npm run build` to build the extension into `dist/`.
-4. Open Chrome/Edge and navigate to `chrome://extensions`.
-5. Enable "Developer mode" in the top right.
-6. Click "Load unpacked" and select the `dist` folder from this project.
+2. Install dependencies with `npm install` or `yarn`.
+3. Build the extension with `npm run build`.
+4. Open `chrome://extensions` or `edge://extensions`.
+5. Turn on **Developer mode**.
+6. Click **Load unpacked**.
+7. Select the project's `dist` directory.
 
 ## Development
 
-- `npm run dev`: Watch for changes and rebuild automatically.
-- `npm run build`: Build for production.
+- `npm run dev` rebuilds on file changes.
+- `npm run build` creates a production build in `dist/`.
+- `npm test` runs the Vitest test suite.
+
+## Project Notes
+
+- The popup entry point is `popup.html`.
+- The full dashboard entry point is `settings.html`.
+- The extension is built with React, TypeScript, Webpack, and Manifest V3.
