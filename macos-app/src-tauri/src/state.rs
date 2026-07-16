@@ -61,9 +61,21 @@ fn state_path() -> PathBuf {
 pub fn load() -> (PersistedState, Option<String>) {
     let path = state_path();
     let raw = match fs::read_to_string(&path) {
-        // No file at all is a fresh install; defaults are correct.
-        Err(_) => return (PersistedState::default(), None),
         Ok(raw) => raw,
+        // Only a missing file is a fresh install; defaults are correct.
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            return (PersistedState::default(), None);
+        }
+        // Any other read failure (permissions, I/O) means real settings
+        // exist but are unreachable — the defaults are placeholders and
+        // must not be allowed to sync away existing blocks.
+        Err(err) => {
+            let warning = format!(
+                "Your saved settings could not be read ({err}). Existing blocks in the \
+                 hosts file are left untouched until you change something."
+            );
+            return (PersistedState::default(), Some(warning));
+        }
     };
     match serde_json::from_str::<PersistedState>(&raw) {
         Ok(mut state) => {

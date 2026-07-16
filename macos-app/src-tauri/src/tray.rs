@@ -58,8 +58,17 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
     // cancelled admin prompt leaves them apart. Don't let the menu claim a
     // state the system isn't actually in.
     let in_sync = crate::engine::status(&desired_domains).map_or(true, |s| s.in_sync);
+    // While state.json is unreadable the in-memory config is a placeholder;
+    // no tray action may act on it (Apply would wipe the real block list).
+    let unreadable = {
+        let state = app.state::<App>();
+        let warning = state.startup_warning.lock().unwrap();
+        warning.is_some()
+    };
 
-    let status_text = if let Some(until) = strict_until {
+    let status_text = if unreadable {
+        "Settings could not be read".to_string()
+    } else if let Some(until) = strict_until {
         format!("Strict session until {}", format_clock(until))
     } else if !enabled {
         "Blocking is off".to_string()
@@ -76,42 +85,56 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
 
     let menu = Menu::new(app)?;
     menu.append(&MenuItem::with_id(app, "status", status_text, false, None::<&str>)?)?;
-    if !in_sync {
+    if unreadable {
+        // Placeholder defaults must not be actionable from the tray: Apply,
+        // the master toggle, or a break would sync an empty block list over
+        // the user's real hosts entries. Recovery happens in the window.
         menu.append(&MenuItem::with_id(
             app,
-            "out-of-sync",
-            "⚠ Not applied yet — hosts file is out of date",
+            "unreadable",
+            "⚠ Open ShortBlock to review and re-save your settings",
             false,
             None::<&str>,
         )?)?;
-        menu.append(&MenuItem::with_id(app, "apply", "Apply Changes Now…", true, None::<&str>)?)?;
-    }
-    menu.append(&PredefinedMenuItem::separator(app)?)?;
-
-    // During a strict session there is deliberately nothing to click that
-    // could weaken blocking — only a lock notice, open, and quit.
-    if strict_until.is_some() {
-        menu.append(&MenuItem::with_id(
-            app,
-            "locked",
-            "Blocking is locked on",
-            false,
-            None::<&str>,
-        )?)?;
+        menu.append(&PredefinedMenuItem::separator(app)?)?;
     } else {
-        menu.append(&MenuItem::with_id(
-            app,
-            "toggle",
-            if enabled { "Turn Blocking Off" } else { "Turn Blocking On" },
-            true,
-            None::<&str>,
-        )?)?;
+        if !in_sync {
+            menu.append(&MenuItem::with_id(
+                app,
+                "out-of-sync",
+                "⚠ Not applied yet — hosts file is out of date",
+                false,
+                None::<&str>,
+            )?)?;
+            menu.append(&MenuItem::with_id(app, "apply", "Apply Changes Now…", true, None::<&str>)?)?;
+        }
+        menu.append(&PredefinedMenuItem::separator(app)?)?;
 
-        if paused_until.is_some() {
-            menu.append(&MenuItem::with_id(app, "resume", "Resume Blocking Now", true, None::<&str>)?)?;
-        } else if enabled {
-            menu.append(&MenuItem::with_id(app, "pause-15", "Take a 15 Minute Break", true, None::<&str>)?)?;
-            menu.append(&MenuItem::with_id(app, "pause-60", "Take a 1 Hour Break", true, None::<&str>)?)?;
+        // During a strict session there is deliberately nothing to click that
+        // could weaken blocking — only a lock notice, open, and quit.
+        if strict_until.is_some() {
+            menu.append(&MenuItem::with_id(
+                app,
+                "locked",
+                "Blocking is locked on",
+                false,
+                None::<&str>,
+            )?)?;
+        } else {
+            menu.append(&MenuItem::with_id(
+                app,
+                "toggle",
+                if enabled { "Turn Blocking Off" } else { "Turn Blocking On" },
+                true,
+                None::<&str>,
+            )?)?;
+
+            if paused_until.is_some() {
+                menu.append(&MenuItem::with_id(app, "resume", "Resume Blocking Now", true, None::<&str>)?)?;
+            } else if enabled {
+                menu.append(&MenuItem::with_id(app, "pause-15", "Take a 15 Minute Break", true, None::<&str>)?)?;
+                menu.append(&MenuItem::with_id(app, "pause-60", "Take a 1 Hour Break", true, None::<&str>)?)?;
+            }
         }
     }
 
@@ -136,12 +159,21 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
 
 fn handle_menu_event(app: &AppHandle, id: &str) {
     // A menu built before a strict session started could still deliver
-    // weakening actions; re-check the lock at event time.
+    // weakening actions; re-check the lock at event time. Same for the
+    // unreadable-state placeholder: no mutating action may act on it.
     let strict = {
         let state = app.state::<App>();
         let state = state.state.lock().unwrap();
         state.config.is_strict_active(now_ms())
     };
+    let unreadable = {
+        let state = app.state::<App>();
+        let warning = state.startup_warning.lock().unwrap();
+        warning.is_some()
+    };
+    if unreadable && matches!(id, "toggle" | "pause-15" | "pause-60" | "resume" | "apply") {
+        return;
+    }
     match id {
         "toggle" if !strict => {
             let state = app.state::<App>();

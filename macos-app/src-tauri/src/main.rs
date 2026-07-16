@@ -23,11 +23,12 @@ pub(crate) struct App {
     /// Unix ms before which the background loop must not auto-prompt for
     /// admin rights again (set after a cancelled authentication dialog).
     auto_sync_backoff_until: AtomicU64,
-    /// Set when state.json existed but couldn't be parsed. While present,
-    /// the in-memory defaults are a placeholder — auto-sync is suppressed so
-    /// they can't remove existing hosts entries. Cleared by the first user
-    /// action, which makes the in-memory state authoritative again.
-    startup_warning: Mutex<Option<String>>,
+    /// Set when state.json existed but couldn't be read or parsed. While
+    /// present, the in-memory defaults are a placeholder — auto-sync and all
+    /// tray actions are suppressed so they can't remove existing hosts
+    /// entries. Cleared by the first deliberate user action in the window,
+    /// which makes the in-memory state authoritative again.
+    pub(crate) startup_warning: Mutex<Option<String>>,
     site_seq: AtomicU64,
 }
 
@@ -102,26 +103,35 @@ pub(crate) fn persist_and_sync(app: &App) -> Snapshot {
     *app.startup_warning.lock().unwrap() = None;
     let sync_error = {
         let mut state = app.state.lock().unwrap();
-        let save_error = state::save(&state).err();
-        let domains = state
-            .config
-            .active_domains(now_ms(), local_minute_of_day());
-        match engine::sync(&domains) {
-            Ok(_) => {
-                state.last_synced_at = Some(now_ms());
-                let _ = state::save(&state);
-                // A successful user-driven sync clears any auto-sync backoff.
-                app.auto_sync_backoff_until.store(0, Ordering::Relaxed);
-                save_error
-            }
-            Err(e) => {
-                // The user just saw (and possibly cancelled) an auth prompt.
-                // Back the background loop off too — otherwise its next tick
-                // sees hosts drift against the already-persisted desired
-                // state and re-prompts seconds after the user declined.
-                app.auto_sync_backoff_until
-                    .store(now_ms() + 30 * 60_000, Ordering::Relaxed);
-                Some(save_error.map_or(e.clone(), |s| format!("{s}; {e}")))
+        match state::save(&state) {
+            // If the new state can't be persisted, don't touch /etc/hosts:
+            // a hosts file ahead of what survives a restart would be undone
+            // by the background loop after relaunch.
+            Err(e) => Some(format!(
+                "Settings could not be saved ({e}); the hosts file was left unchanged"
+            )),
+            Ok(()) => {
+                let domains = state
+                    .config
+                    .active_domains(now_ms(), local_minute_of_day());
+                match engine::sync(&domains) {
+                    Ok(_) => {
+                        state.last_synced_at = Some(now_ms());
+                        let _ = state::save(&state);
+                        // A successful user-driven sync clears any auto-sync backoff.
+                        app.auto_sync_backoff_until.store(0, Ordering::Relaxed);
+                        None
+                    }
+                    Err(e) => {
+                        // The user just saw (and possibly cancelled) an auth
+                        // prompt. Back the background loop off too — otherwise
+                        // its next tick sees hosts drift against the persisted
+                        // desired state and re-prompts right after they declined.
+                        app.auto_sync_backoff_until
+                            .store(now_ms() + 30 * 60_000, Ordering::Relaxed);
+                        Some(e)
+                    }
+                }
             }
         }
     };
@@ -170,7 +180,7 @@ fn start_strict(
     if minutes == 0 || minutes > 24 * 60 {
         return Err("Strict sessions can last between 1 minute and 24 hours".to_string());
     }
-    {
+    let previous = {
         let mut state = app.state.lock().unwrap();
         let until = now_ms() + minutes * 60_000;
         // Extending an already-running session is allowed; shortening is not.
@@ -180,9 +190,24 @@ fn start_strict(
         // Only strict_until is set: it already overrides `enabled`, pauses,
         // and the schedule while active, and the user's underlying settings
         // (switch off, running break) come back intact when the lock ends.
+        let previous = state.config.strict_until;
         state.config.strict_until = Some(until);
+        previous
+    };
+    let snap = finish(&app, &handle);
+    if let Some(err) = snap.sync_error {
+        // The lock must never outrun the hosts file: a strict session whose
+        // apply was cancelled would freeze the controls without blocking
+        // anything. Roll it back and report why it didn't start.
+        {
+            let mut state = app.state.lock().unwrap();
+            state.config.strict_until = previous;
+            let _ = state::save(&state);
+        }
+        tray::refresh(&handle);
+        return Err(format!("Strict session was not started: {err}"));
     }
-    Ok(finish(&app, &handle))
+    Ok(snap)
 }
 
 #[tauri::command]
@@ -348,7 +373,13 @@ fn spawn_sync_loop(handle: tauri::AppHandle) {
                 tray::refresh(&handle);
             }
 
-            if app.auto_sync_backoff_until.load(Ordering::Relaxed) > now {
+            // The backoff exists to stop re-prompting after a declined
+            // dialog, not to delay time-driven cleanup: when a timer, break,
+            // focus window, or strict session just transitioned, attempt the
+            // sync anyway so an expired block doesn't linger for the rest of
+            // the backoff. A cancelled prompt re-arms the backoff below.
+            let backoff_active = app.auto_sync_backoff_until.load(Ordering::Relaxed) > now;
+            if backoff_active && !time_transition {
                 continue;
             }
             let drifted = matches!(engine::status(&desired), Ok(s) if !s.in_sync);
@@ -429,13 +460,38 @@ fn main() {
         // (the tray's Quit item is also disabled while strict is active).
         .run(|handle, event| {
             if let tauri::RunEvent::ExitRequested { api, .. } = &event {
-                let strict = {
-                    let app = handle.state::<App>();
+                let app = handle.state::<App>();
+                let (strict, desired) = {
                     let state = app.state.lock().unwrap();
-                    state.config.is_strict_active(now_ms())
+                    let now = now_ms();
+                    (
+                        state.config.is_strict_active(now),
+                        state.config.active_domains(now, local_minute_of_day()),
+                    )
                 };
                 if strict {
                     api.prevent_exit();
+                    return;
+                }
+                // A time-driven unblock (strict/timer/break expiry) may not
+                // have hit the hosts file yet — the loop only ticks every
+                // 30 s. Quitting in that window would orphan those entries,
+                // so attempt one cleanup sync when the live file blocks
+                // domains the desired state no longer wants. If the user
+                // declines the prompt, the quit proceeds — that's an
+                // informed choice, and only ever when placeholder defaults
+                // aren't in play (unreadable state suppresses this too).
+                let unreadable = app.startup_warning.lock().unwrap().is_some();
+                if !unreadable {
+                    if let Ok(status) = engine::status(&desired) {
+                        let stale = status
+                            .applied_domains
+                            .iter()
+                            .any(|d| !status.desired_domains.contains(d));
+                        if stale {
+                            let _ = engine::sync(&desired);
+                        }
+                    }
                 }
             }
         });
