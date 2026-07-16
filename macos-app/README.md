@@ -31,6 +31,21 @@ The UI is a Liquid Glass design: translucent panes rendered over live window vib
   timers, pause expiry, focus-hour boundaries — and re-applies the block list. If you
   cancel the admin prompt it backs off for 30 minutes instead of nagging.
 
+## Menu bar control
+
+ShortBlock lives in the macOS menu bar (a slashed-circle template glyph next to the
+clock). From there you can, without opening the window:
+
+- see the current status ("Blocking 4 domains", "On a break until 15:45", …)
+- turn blocking on or off
+- take a 15-minute or 1-hour break, or resume early
+- open the main window, or quit
+
+Closing the main window doesn't quit the app — it keeps running in the menu bar so
+timers, focus hours, and breaks keep being enforced. Use "Quit ShortBlock" in the
+menu-bar menu to exit (blocks already written to the hosts file stay active until
+you turn blocking off).
+
 ## Features carried over from the extension
 
 - Master on/off switch

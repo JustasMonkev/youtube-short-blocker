@@ -8,6 +8,7 @@ compile_error!("ShortBlock targets macOS only — build it on a Mac with `cargo 
 
 mod engine;
 mod state;
+mod tray;
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
@@ -17,8 +18,8 @@ use blocker_core::{normalize_host, ScheduleWindow, Site, MINUTES_PER_DAY};
 use state::{local_minute_of_day, now_ms, PersistedState};
 use tauri::{Emitter, Manager};
 
-struct App {
-    state: Mutex<PersistedState>,
+pub(crate) struct App {
+    pub(crate) state: Mutex<PersistedState>,
     /// Unix ms before which the background loop must not auto-prompt for
     /// admin rights again (set after a cancelled authentication dialog).
     auto_sync_backoff_until: AtomicU64,
@@ -56,7 +57,7 @@ fn snapshot(app: &App, sync_error: Option<String>) -> Snapshot {
 /// Persists state, then tries to bring /etc/hosts in line with it.
 /// A failed sync (e.g. cancelled admin prompt) is reported in the snapshot
 /// rather than treated as a hard error, so the UI can offer a retry.
-fn persist_and_sync(app: &App) -> Snapshot {
+pub(crate) fn persist_and_sync(app: &App) -> Snapshot {
     let sync_error = {
         let mut state = app.state.lock().unwrap();
         let save_error = state::save(&state).err();
@@ -77,13 +78,20 @@ fn persist_and_sync(app: &App) -> Snapshot {
     snapshot(app, sync_error)
 }
 
+/// Persist + sync, then keep the menu-bar item's labels in step with the UI.
+fn finish(app: &App, handle: &tauri::AppHandle) -> Snapshot {
+    let snap = persist_and_sync(app);
+    tray::refresh(handle);
+    snap
+}
+
 #[tauri::command]
 fn get_state(app: tauri::State<App>) -> Snapshot {
     snapshot(&app, None)
 }
 
 #[tauri::command]
-fn set_enabled(app: tauri::State<App>, enabled: bool) -> Snapshot {
+fn set_enabled(app: tauri::State<App>, handle: tauri::AppHandle, enabled: bool) -> Snapshot {
     {
         let mut state = app.state.lock().unwrap();
         state.config.enabled = enabled;
@@ -91,12 +99,13 @@ fn set_enabled(app: tauri::State<App>, enabled: bool) -> Snapshot {
             state.config.paused_until = None;
         }
     }
-    persist_and_sync(&app)
+    finish(&app, &handle)
 }
 
 #[tauri::command]
 fn add_site(
     app: tauri::State<App>,
+    handle: tauri::AppHandle,
     input: String,
     label: Option<String>,
     minutes: Option<u64>,
@@ -120,20 +129,20 @@ fn add_site(
             expires_at: minutes.filter(|m| *m > 0).map(|m| now_ms() + m * 60_000),
         });
     }
-    Ok(persist_and_sync(&app))
+    Ok(finish(&app, &handle))
 }
 
 #[tauri::command]
-fn remove_site(app: tauri::State<App>, id: String) -> Snapshot {
+fn remove_site(app: tauri::State<App>, handle: tauri::AppHandle, id: String) -> Snapshot {
     {
         let mut state = app.state.lock().unwrap();
         state.config.sites.retain(|s| s.id != id);
     }
-    persist_and_sync(&app)
+    finish(&app, &handle)
 }
 
 #[tauri::command]
-fn toggle_site(app: tauri::State<App>, id: String, enabled: bool) -> Snapshot {
+fn toggle_site(app: tauri::State<App>, handle: tauri::AppHandle, id: String, enabled: bool) -> Snapshot {
     {
         let mut state = app.state.lock().unwrap();
         if let Some(site) = state.config.sites.iter_mut().find(|s| s.id == id) {
@@ -146,11 +155,11 @@ fn toggle_site(app: tauri::State<App>, id: String, enabled: bool) -> Snapshot {
             }
         }
     }
-    persist_and_sync(&app)
+    finish(&app, &handle)
 }
 
 #[tauri::command]
-fn pause(app: tauri::State<App>, minutes: u64) -> Result<Snapshot, String> {
+fn pause(app: tauri::State<App>, handle: tauri::AppHandle, minutes: u64) -> Result<Snapshot, String> {
     if minutes == 0 || minutes > 24 * 60 {
         return Err("Pause length must be between 1 minute and 24 hours".to_string());
     }
@@ -158,20 +167,20 @@ fn pause(app: tauri::State<App>, minutes: u64) -> Result<Snapshot, String> {
         let mut state = app.state.lock().unwrap();
         state.config.paused_until = Some(now_ms() + minutes * 60_000);
     }
-    Ok(persist_and_sync(&app))
+    Ok(finish(&app, &handle))
 }
 
 #[tauri::command]
-fn resume(app: tauri::State<App>) -> Snapshot {
+fn resume(app: tauri::State<App>, handle: tauri::AppHandle) -> Snapshot {
     {
         let mut state = app.state.lock().unwrap();
         state.config.paused_until = None;
     }
-    persist_and_sync(&app)
+    finish(&app, &handle)
 }
 
 #[tauri::command]
-fn set_schedule(app: tauri::State<App>, start_minute: u16, end_minute: u16) -> Result<Snapshot, String> {
+fn set_schedule(app: tauri::State<App>, handle: tauri::AppHandle, start_minute: u16, end_minute: u16) -> Result<Snapshot, String> {
     if start_minute >= MINUTES_PER_DAY || end_minute >= MINUTES_PER_DAY {
         return Err("Schedule times must be within a single day".to_string());
     }
@@ -179,21 +188,21 @@ fn set_schedule(app: tauri::State<App>, start_minute: u16, end_minute: u16) -> R
         let mut state = app.state.lock().unwrap();
         state.config.schedule = Some(ScheduleWindow { start_minute, end_minute });
     }
-    Ok(persist_and_sync(&app))
+    Ok(finish(&app, &handle))
 }
 
 #[tauri::command]
-fn clear_schedule(app: tauri::State<App>) -> Snapshot {
+fn clear_schedule(app: tauri::State<App>, handle: tauri::AppHandle) -> Snapshot {
     {
         let mut state = app.state.lock().unwrap();
         state.config.schedule = None;
     }
-    persist_and_sync(&app)
+    finish(&app, &handle)
 }
 
 #[tauri::command]
-fn sync_now(app: tauri::State<App>) -> Snapshot {
-    persist_and_sync(&app)
+fn sync_now(app: tauri::State<App>, handle: tauri::AppHandle) -> Snapshot {
+    finish(&app, &handle)
 }
 
 /// Watches for time-driven transitions (site timers, pause expiry, schedule
@@ -230,6 +239,7 @@ fn spawn_sync_loop(handle: tauri::AppHandle) {
             }
         }
         let _ = handle.emit("shortblock://state-changed", ());
+        tray::refresh(&handle);
     });
 }
 
@@ -266,8 +276,17 @@ fn main() {
             )
             .expect("vibrancy is supported on macOS 10.14+");
 
+            tray::init(app.handle())?;
             spawn_sync_loop(app.handle().clone());
             Ok(())
+        })
+        // Closing the window keeps ShortBlock alive in the menu bar;
+        // "Quit ShortBlock" in the tray menu exits for real.
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                api.prevent_close();
+                let _ = window.hide();
+            }
         })
         .run(tauri::generate_context!())
         .expect("failed to start ShortBlock");
