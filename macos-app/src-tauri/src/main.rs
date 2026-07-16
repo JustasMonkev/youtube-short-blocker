@@ -393,12 +393,20 @@ fn spawn_sync_loop(handle: tauri::AppHandle) {
             // edits in memory only, so prove the config is persisted before
             // rewriting the hosts file; retry next tick (e.g. once disk
             // space frees up) rather than syncing something a restart would
-            // silently revert.
-            {
+            // silently revert. The desired set is recomputed under the same
+            // lock as the save so a user change that landed mid-tick is
+            // applied, not overwritten by the stale snapshot taken above.
+            let desired = {
                 let state = app.state.lock().unwrap();
                 if state::save(&state).is_err() {
                     continue;
                 }
+                state
+                    .config
+                    .active_domains(now_ms(), local_minute_of_day())
+            };
+            if matches!(engine::status(&desired), Ok(s) if s.in_sync) {
+                continue;
             }
 
             match engine::sync(&desired) {
