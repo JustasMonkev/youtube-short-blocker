@@ -31,7 +31,10 @@ pub(crate) struct App {
 struct Snapshot {
     config: blocker_core::BlockerConfig,
     blocking_active: bool,
+    strict_active: bool,
     active_domain_count: usize,
+    /// host → related domains automatically blocked alongside it.
+    coverage: std::collections::HashMap<String, Vec<String>>,
     last_synced_at: Option<u64>,
     sync: Option<engine::SyncStatus>,
     sync_error: Option<String>,
@@ -43,14 +46,43 @@ fn snapshot(app: &App, sync_error: Option<String>) -> Snapshot {
     let now = now_ms();
     let minute = local_minute_of_day();
     let domains = state.config.active_domains(now, minute);
+    let coverage = state
+        .config
+        .sites
+        .iter()
+        .filter_map(|site| {
+            // Shared packs (x.com/twitter.com) list both hosts; don't show a
+            // site as "also blocking" itself.
+            let related: Vec<String> = blocker_core::coverage::related_domains(&site.host)
+                .iter()
+                .filter(|d| **d != site.host)
+                .map(|d| d.to_string())
+                .collect();
+            (!related.is_empty()).then(|| (site.host.clone(), related))
+        })
+        .collect();
     Snapshot {
         config: state.config.clone(),
         blocking_active: state.config.is_blocking_active(now, minute),
+        strict_active: state.config.is_strict_active(now),
         active_domain_count: domains.len(),
+        coverage,
         last_synced_at: state.last_synced_at,
         sync: engine::status(&domains).ok(),
         sync_error,
         now_ms: now,
+    }
+}
+
+/// Guard for actions that would weaken blocking during a strict session.
+fn reject_if_strict(app: &App) -> Result<(), String> {
+    let state = app.state.lock().unwrap();
+    match state.config.strict_until.filter(|_| state.config.is_strict_active(now_ms())) {
+        Some(until) => Err(format!(
+            "A strict session is locked until {} — this can't be changed until it ends",
+            crate::tray::format_clock(until)
+        )),
+        None => Ok(()),
     }
 }
 
@@ -91,7 +123,14 @@ fn get_state(app: tauri::State<App>) -> Snapshot {
 }
 
 #[tauri::command]
-fn set_enabled(app: tauri::State<App>, handle: tauri::AppHandle, enabled: bool) -> Snapshot {
+fn set_enabled(
+    app: tauri::State<App>,
+    handle: tauri::AppHandle,
+    enabled: bool,
+) -> Result<Snapshot, String> {
+    if !enabled {
+        reject_if_strict(&app)?;
+    }
     {
         let mut state = app.state.lock().unwrap();
         state.config.enabled = enabled;
@@ -99,7 +138,32 @@ fn set_enabled(app: tauri::State<App>, handle: tauri::AppHandle, enabled: bool) 
             state.config.paused_until = None;
         }
     }
-    finish(&app, &handle)
+    Ok(finish(&app, &handle))
+}
+
+/// Starts an unstoppable strict session: blocking locks on and cannot be
+/// turned off, paused, or weakened until the session ends.
+#[tauri::command]
+fn start_strict(
+    app: tauri::State<App>,
+    handle: tauri::AppHandle,
+    minutes: u64,
+) -> Result<Snapshot, String> {
+    if minutes == 0 || minutes > 24 * 60 {
+        return Err("Strict sessions can last between 1 minute and 24 hours".to_string());
+    }
+    {
+        let mut state = app.state.lock().unwrap();
+        let until = now_ms() + minutes * 60_000;
+        // Extending an already-running session is allowed; shortening is not.
+        if state.config.strict_until.is_some_and(|cur| cur > until) {
+            return Err("A longer strict session is already running".to_string());
+        }
+        state.config.strict_until = Some(until);
+        state.config.enabled = true;
+        state.config.paused_until = None;
+    }
+    Ok(finish(&app, &handle))
 }
 
 #[tauri::command]
@@ -133,16 +197,29 @@ fn add_site(
 }
 
 #[tauri::command]
-fn remove_site(app: tauri::State<App>, handle: tauri::AppHandle, id: String) -> Snapshot {
+fn remove_site(
+    app: tauri::State<App>,
+    handle: tauri::AppHandle,
+    id: String,
+) -> Result<Snapshot, String> {
+    reject_if_strict(&app)?;
     {
         let mut state = app.state.lock().unwrap();
         state.config.sites.retain(|s| s.id != id);
     }
-    finish(&app, &handle)
+    Ok(finish(&app, &handle))
 }
 
 #[tauri::command]
-fn toggle_site(app: tauri::State<App>, handle: tauri::AppHandle, id: String, enabled: bool) -> Snapshot {
+fn toggle_site(
+    app: tauri::State<App>,
+    handle: tauri::AppHandle,
+    id: String,
+    enabled: bool,
+) -> Result<Snapshot, String> {
+    if !enabled {
+        reject_if_strict(&app)?;
+    }
     {
         let mut state = app.state.lock().unwrap();
         if let Some(site) = state.config.sites.iter_mut().find(|s| s.id == id) {
@@ -155,11 +232,12 @@ fn toggle_site(app: tauri::State<App>, handle: tauri::AppHandle, id: String, ena
             }
         }
     }
-    finish(&app, &handle)
+    Ok(finish(&app, &handle))
 }
 
 #[tauri::command]
 fn pause(app: tauri::State<App>, handle: tauri::AppHandle, minutes: u64) -> Result<Snapshot, String> {
+    reject_if_strict(&app)?;
     if minutes == 0 || minutes > 24 * 60 {
         return Err("Pause length must be between 1 minute and 24 hours".to_string());
     }
@@ -253,6 +331,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             get_state,
             set_enabled,
+            start_strict,
             add_site,
             remove_site,
             toggle_site,

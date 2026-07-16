@@ -21,9 +21,7 @@ impl Default for PersistedState {
         Self {
             config: BlockerConfig {
                 enabled: true,
-                paused_until: None,
-                schedule: None,
-                sites: Vec::new(),
+                ..Default::default()
             },
             last_synced_at: None,
         }

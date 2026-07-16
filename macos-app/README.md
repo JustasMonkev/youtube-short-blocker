@@ -46,6 +46,30 @@ timers, focus hours, and breaks keep being enforced. Use "Quit ShortBlock" in th
 menu-bar menu to exit (blocks already written to the hosts file stay active until
 you turn blocking off).
 
+## Strict sessions
+
+A strict session locks blocking **on** for a chosen duration (1 hour – 24 hours).
+While it runs:
+
+- blocking is enforced regardless of the master switch, pauses, or focus hours
+- turning blocking off, pausing, disabling a site, or removing a site is rejected
+  by the Rust backend (not just hidden in the UI), and the menu-bar menu shows only
+  a lock notice
+- quitting the app doesn't help — the hosts-file entries stay in place
+- there is deliberately no cancel button; starting one requires a confirming
+  second click
+
+## Subdomain coverage packs
+
+`/etc/hosts` can't wildcard subdomains, so blocking `youtube.com` alone would leave
+`m.youtube.com` reachable. ShortBlock ships coverage packs for popular sites and
+applies them automatically: adding `youtube.com` also blocks `m.youtube.com`,
+`music.youtube.com`, `youtubei.googleapis.com`, `youtube-nocookie.com`, and
+`youtu.be`; adding `x.com` also blocks `twitter.com` and `t.co`; and so on
+(Reddit, Instagram, Facebook, TikTok, Twitch, and more — see
+`blocker-core/src/coverage.rs`). The packs live in code, not in your saved list,
+so they improve with app updates. Each site row shows what else it covers.
+
 ## Features carried over from the extension
 
 - Master on/off switch

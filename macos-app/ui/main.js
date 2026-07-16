@@ -31,14 +31,22 @@ function render(s) {
   snapshot = s;
   const { config } = s;
   const paused = config.paused_until && config.paused_until > s.now_ms;
+  const strict = s.strict_active;
 
   // Hero
   const orb = el("status-orb");
   const title = el("status-title");
   const subtitle = el("status-subtitle");
-  el("master-toggle").checked = config.enabled;
+  const master = el("master-toggle");
+  master.checked = config.enabled || strict;
+  master.disabled = strict;
 
-  if (!config.enabled) {
+  if (strict) {
+    orb.dataset.tone = "lock";
+    title.textContent = "Strict session";
+    const n = s.active_domain_count;
+    subtitle.textContent = `Locked until ${fmtTime(config.strict_until)} · ${n} domain${n === 1 ? "" : "s"} blocked everywhere.`;
+  } else if (!config.enabled) {
     orb.dataset.tone = "off";
     title.textContent = "Blocking is off";
     subtitle.textContent = "Flip the switch to start blocking system-wide.";
@@ -72,15 +80,30 @@ function render(s) {
     banner.classList.add("hidden");
   }
 
+  // Strict session card
+  el("strict-form").classList.toggle("hidden", strict);
+  const strictStatus = el("strict-status");
+  strictStatus.classList.toggle("hidden", !strict);
+  if (strict) {
+    strictStatus.dataset.strictUntil = config.strict_until;
+    strictStatus.textContent = `🔒 Locked until ${fmtTime(config.strict_until)} — ${fmtCountdown(config.strict_until)} left`;
+  } else {
+    delete strictStatus.dataset.strictUntil;
+    disarmStrictButton();
+  }
+
   // Pause chips
   el("resume-btn").classList.toggle("hidden", !paused);
+  document.querySelectorAll("#pause-row .chip[data-minutes]").forEach((chip) => {
+    chip.disabled = strict;
+  });
 
   // Site list
   const list = el("site-list");
   list.replaceChildren();
   const sites = [...config.sites].sort((a, b) => a.label.localeCompare(b.label));
   for (const site of sites) {
-    list.appendChild(siteRow(site, s.now_ms));
+    list.appendChild(siteRow(site, s.now_ms, strict, s.coverage[site.host]));
   }
   el("site-empty").classList.toggle("hidden", sites.length > 0);
   const enabledCount = sites.filter((x) => x.enabled).length;
@@ -119,7 +142,7 @@ function minuteToInput(minute) {
   return `${h}:${m}`;
 }
 
-function siteRow(site, nowMs) {
+function siteRow(site, nowMs, strict, coverage) {
   const li = document.createElement("li");
   li.className = "site-row";
 
@@ -132,6 +155,16 @@ function siteRow(site, nowMs) {
   host.className = "site-host";
   host.textContent = site.host;
   info.append(label, host);
+  if (coverage?.length) {
+    const cov = document.createElement("div");
+    cov.className = "site-coverage";
+    cov.textContent =
+      coverage.length <= 2
+        ? `also blocks ${coverage.join(", ")}`
+        : `also blocks ${coverage.slice(0, 2).join(", ")} and ${coverage.length - 2} more`;
+    cov.title = `Automatically blocked with ${site.host}:\n${coverage.join("\n")}`;
+    info.appendChild(cov);
+  }
   li.appendChild(info);
 
   if (site.expires_at) {
@@ -152,6 +185,8 @@ function siteRow(site, nowMs) {
   const input = document.createElement("input");
   input.type = "checkbox";
   input.checked = site.enabled;
+  // During a strict session sites can be turned on but not off.
+  input.disabled = strict && site.enabled;
   input.addEventListener("change", () =>
     call("toggle_site", { id: site.id, enabled: input.checked })
   );
@@ -162,8 +197,9 @@ function siteRow(site, nowMs) {
 
   const remove = document.createElement("button");
   remove.className = "icon-btn";
-  remove.title = `Remove ${site.host}`;
+  remove.title = strict ? "Locked during strict session" : `Remove ${site.host}`;
   remove.textContent = "✕";
+  remove.disabled = strict;
   remove.addEventListener("click", () => call("remove_site", { id: site.id }));
   li.appendChild(remove);
 
@@ -184,6 +220,15 @@ function armCountdowns() {
     if (snapshot?.config.paused_until && snapshot.config.paused_until <= Date.now()) {
       refresh();
     }
+    const strictStatus = el("strict-status");
+    const strictUntil = Number(strictStatus.dataset.strictUntil || 0);
+    if (strictUntil) {
+      if (strictUntil <= Date.now()) {
+        refresh(); // the lock just expired
+      } else {
+        strictStatus.textContent = `🔒 Locked until ${fmtTime(strictUntil)} — ${fmtCountdown(strictUntil)} left`;
+      }
+    }
   }, 15000);
 }
 
@@ -194,9 +239,19 @@ async function call(cmd, args = {}) {
     render(await invoke(cmd, args));
     return true;
   } catch (err) {
-    showAddError(String(err));
+    showToast(String(err));
+    refresh(); // re-render so rejected toggles snap back to real state
     return false;
   }
+}
+
+let toastTimer = null;
+function showToast(message) {
+  const node = el("toast");
+  node.textContent = message;
+  node.classList.remove("hidden");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => node.classList.add("hidden"), 5000);
 }
 
 async function refresh() {
@@ -233,11 +288,38 @@ el("add-form").addEventListener("submit", async (e) => {
   if (!input.value.trim()) return;
   const args = { input: input.value };
   if (timer.value) args.minutes = Number(timer.value);
-  if (await call("add_site", args)) {
+  try {
+    render(await invoke("add_site", args));
     input.value = "";
     timer.value = "";
     el("add-error").classList.add("hidden");
+  } catch (err) {
+    showAddError(String(err)); // validation errors belong next to the field
   }
+});
+
+// Starting a strict session is irreversible, so require a confirming second
+// click instead of firing immediately.
+let strictArmTimer = null;
+function disarmStrictButton() {
+  clearTimeout(strictArmTimer);
+  const btn = el("strict-start");
+  btn.dataset.armed = "";
+  btn.textContent = "Start strict session";
+}
+el("strict-start").addEventListener("click", () => {
+  const btn = el("strict-start");
+  const minutes = Number(el("strict-minutes").value);
+  if (btn.dataset.armed !== "1") {
+    btn.dataset.armed = "1";
+    const label = el("strict-minutes").selectedOptions[0].textContent;
+    btn.textContent = `Click again to lock for ${label}`;
+    clearTimeout(strictArmTimer);
+    strictArmTimer = setTimeout(disarmStrictButton, 6000);
+    return;
+  }
+  disarmStrictButton();
+  call("start_strict", { minutes });
 });
 
 el("schedule-form").addEventListener("submit", (e) => {

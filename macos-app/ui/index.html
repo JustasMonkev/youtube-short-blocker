@@ -32,6 +32,26 @@
       <button class="btn btn-small" id="sync-now">Apply now</button>
     </div>
 
+    <!-- Strict session -->
+    <section class="glass card strict-card">
+      <div class="card-head">
+        <h2>Strict session</h2>
+        <p class="muted">Lock blocking on. Until the timer ends, blocking cannot be turned off,
+        paused, or weakened — not even from the menu bar.</p>
+      </div>
+      <div class="chip-row" id="strict-form">
+        <select class="field" id="strict-minutes">
+          <option value="60">1 hour</option>
+          <option value="120">2 hours</option>
+          <option value="240" selected>4 hours</option>
+          <option value="480">8 hours</option>
+          <option value="1440">24 hours</option>
+        </select>
+        <button class="btn btn-strict" id="strict-start">Start strict session</button>
+      </div>
+      <p class="strict-active hidden" id="strict-status"></p>
+    </section>
+
     <!-- Pause -->
     <section class="glass card">
       <div class="card-head">
@@ -94,6 +114,8 @@
 
     <footer class="muted footnote" id="footnote"></footer>
   </main>
+
+  <div class="toast glass hidden" id="toast"></div>
 
   <script src="main.js"></script>
 </body>

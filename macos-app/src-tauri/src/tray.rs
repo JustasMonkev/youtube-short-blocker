@@ -40,7 +40,7 @@ pub fn refresh(app: &AppHandle) {
 }
 
 fn build_menu(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
-    let (enabled, paused_until, blocking_active, domain_count) = {
+    let (enabled, paused_until, strict_until, blocking_active, domain_count) = {
         let state = app.state::<App>();
         let state = state.state.lock().unwrap();
         let now = now_ms();
@@ -48,12 +48,15 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
         (
             state.config.enabled,
             state.config.paused_until.filter(|until| *until > now),
+            state.config.strict_until.filter(|_| state.config.is_strict_active(now)),
             state.config.is_blocking_active(now, minute),
             state.config.active_domains(now, minute).len(),
         )
     };
 
-    let status_text = if !enabled {
+    let status_text = if let Some(until) = strict_until {
+        format!("Strict session until {}", format_clock(until))
+    } else if !enabled {
         "Blocking is off".to_string()
     } else if let Some(until) = paused_until {
         format!("On a break until {}", format_clock(until))
@@ -69,19 +72,32 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
     let menu = Menu::new(app)?;
     menu.append(&MenuItem::with_id(app, "status", status_text, false, None::<&str>)?)?;
     menu.append(&PredefinedMenuItem::separator(app)?)?;
-    menu.append(&MenuItem::with_id(
-        app,
-        "toggle",
-        if enabled { "Turn Blocking Off" } else { "Turn Blocking On" },
-        true,
-        None::<&str>,
-    )?)?;
 
-    if paused_until.is_some() {
-        menu.append(&MenuItem::with_id(app, "resume", "Resume Blocking Now", true, None::<&str>)?)?;
-    } else if enabled {
-        menu.append(&MenuItem::with_id(app, "pause-15", "Take a 15 Minute Break", true, None::<&str>)?)?;
-        menu.append(&MenuItem::with_id(app, "pause-60", "Take a 1 Hour Break", true, None::<&str>)?)?;
+    // During a strict session there is deliberately nothing to click that
+    // could weaken blocking — only a lock notice, open, and quit.
+    if strict_until.is_some() {
+        menu.append(&MenuItem::with_id(
+            app,
+            "locked",
+            "Blocking is locked on",
+            false,
+            None::<&str>,
+        )?)?;
+    } else {
+        menu.append(&MenuItem::with_id(
+            app,
+            "toggle",
+            if enabled { "Turn Blocking Off" } else { "Turn Blocking On" },
+            true,
+            None::<&str>,
+        )?)?;
+
+        if paused_until.is_some() {
+            menu.append(&MenuItem::with_id(app, "resume", "Resume Blocking Now", true, None::<&str>)?)?;
+        } else if enabled {
+            menu.append(&MenuItem::with_id(app, "pause-15", "Take a 15 Minute Break", true, None::<&str>)?)?;
+            menu.append(&MenuItem::with_id(app, "pause-60", "Take a 1 Hour Break", true, None::<&str>)?)?;
+        }
     }
 
     menu.append(&PredefinedMenuItem::separator(app)?)?;
@@ -92,8 +108,15 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
 }
 
 fn handle_menu_event(app: &AppHandle, id: &str) {
+    // A menu built before a strict session started could still deliver
+    // weakening actions; re-check the lock at event time.
+    let strict = {
+        let state = app.state::<App>();
+        let state = state.state.lock().unwrap();
+        state.config.is_strict_active(now_ms())
+    };
     match id {
-        "toggle" => {
+        "toggle" if !strict => {
             let state = app.state::<App>();
             {
                 let mut state = state.state.lock().unwrap();
@@ -104,7 +127,7 @@ fn handle_menu_event(app: &AppHandle, id: &str) {
             }
             apply_and_notify(app);
         }
-        "pause-15" | "pause-60" => {
+        "pause-15" | "pause-60" if !strict => {
             let minutes: u64 = if id == "pause-15" { 15 } else { 60 };
             let state = app.state::<App>();
             {
@@ -140,7 +163,7 @@ fn apply_and_notify(app: &AppHandle) {
     refresh(app);
 }
 
-fn format_clock(unix_ms: u64) -> String {
+pub(crate) fn format_clock(unix_ms: u64) -> String {
     use chrono::TimeZone;
     match chrono::Local.timestamp_millis_opt(unix_ms as i64) {
         chrono::LocalResult::Single(t) => t.format("%H:%M").to_string(),

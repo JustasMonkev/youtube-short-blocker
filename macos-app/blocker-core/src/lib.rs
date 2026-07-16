@@ -4,6 +4,7 @@
 //! (`now_ms`, unix epoch milliseconds) and the current local minute-of-day,
 //! so the logic is fully unit-testable on any platform.
 
+pub mod coverage;
 pub mod hosts;
 
 use serde::{Deserialize, Serialize};
@@ -66,11 +67,23 @@ pub struct BlockerConfig {
     pub schedule: Option<ScheduleWindow>,
     #[serde(default)]
     pub sites: Vec<Site>,
+    /// While set and in the future, blocking is locked on: it overrides
+    /// `enabled`, pauses, and the schedule, and cannot be ended early.
+    #[serde(default)]
+    pub strict_until: Option<u64>,
 }
 
 impl BlockerConfig {
+    /// Whether an unstoppable strict session is currently running.
+    pub fn is_strict_active(&self, now_ms: u64) -> bool {
+        self.strict_until.is_some_and(|until| until > now_ms)
+    }
+
     /// Whether blocking should currently be enforced at all.
     pub fn is_blocking_active(&self, now_ms: u64, local_minute: u16) -> bool {
+        if self.is_strict_active(now_ms) {
+            return true;
+        }
         if !self.enabled {
             return false;
         }
@@ -81,22 +94,30 @@ impl BlockerConfig {
     }
 
     /// The deduplicated, sorted list of domains that must resolve to nowhere
-    /// right now. Each site expands to the bare host plus its `www.` variant,
-    /// since `/etc/hosts` cannot express wildcards.
+    /// right now. Each site expands to the bare host, its `www.` variant
+    /// (since `/etc/hosts` cannot express wildcards), and any known related
+    /// domains from the coverage table (mobile hosts, mirrors, URL shorteners).
     pub fn active_domains(&self, now_ms: u64, local_minute: u16) -> Vec<String> {
         if !self.is_blocking_active(now_ms, local_minute) {
             return Vec::new();
         }
         let mut domains: Vec<String> = Vec::new();
         for site in self.sites.iter().filter(|s| s.is_active(now_ms)) {
-            domains.push(site.host.clone());
-            if !site.host.starts_with("www.") {
-                domains.push(format!("www.{}", site.host));
+            push_with_www(&mut domains, &site.host);
+            for related in coverage::related_domains(&site.host) {
+                push_with_www(&mut domains, related);
             }
         }
         domains.sort();
         domains.dedup();
         domains
+    }
+}
+
+fn push_with_www(domains: &mut Vec<String>, host: &str) {
+    domains.push(host.to_string());
+    if !host.starts_with("www.") {
+        domains.push(format!("www.{host}"));
     }
 }
 
@@ -203,9 +224,8 @@ mod tests {
     fn blocking_respects_enabled_pause_and_schedule() {
         let mut cfg = BlockerConfig {
             enabled: true,
-            paused_until: None,
-            schedule: None,
             sites: vec![site("youtube.com", true, None)],
+            ..Default::default()
         };
         assert!(cfg.is_blocking_active(1000, 0));
 
@@ -227,38 +247,61 @@ mod tests {
     fn active_domains_expands_www_dedups_and_sorts() {
         let cfg = BlockerConfig {
             enabled: true,
-            paused_until: None,
-            schedule: None,
             sites: vec![
-                site("youtube.com", true, None),
-                site("www.youtube.com", true, None),
-                site("x.com", true, None),
-                site("reddit.com", false, None),
+                site("example.com", true, None),
+                site("www.example.com", true, None),
+                site("other.org", false, None),
                 site("expired.com", true, Some(500)),
                 site("timed.com", true, Some(5000)),
             ],
+            ..Default::default()
         };
         assert_eq!(
             cfg.active_domains(1000, 0),
-            vec![
-                "timed.com",
-                "www.timed.com",
-                "www.x.com",
-                "www.youtube.com",
-                "x.com",
-                "youtube.com",
-            ]
+            vec!["example.com", "timed.com", "www.example.com", "www.timed.com"]
         );
+    }
+
+    #[test]
+    fn active_domains_includes_coverage_packs() {
+        let cfg = BlockerConfig {
+            enabled: true,
+            sites: vec![site("youtube.com", true, None)],
+            ..Default::default()
+        };
+        let domains = cfg.active_domains(1000, 0);
+        for expected in ["youtube.com", "www.youtube.com", "m.youtube.com", "youtu.be", "youtubei.googleapis.com"] {
+            assert!(domains.contains(&expected.to_string()), "missing {expected}");
+        }
     }
 
     #[test]
     fn active_domains_empty_when_blocking_inactive() {
         let cfg = BlockerConfig {
             enabled: false,
-            paused_until: None,
-            schedule: None,
             sites: vec![site("youtube.com", true, None)],
+            ..Default::default()
         };
         assert!(cfg.active_domains(1000, 0).is_empty());
+    }
+
+    #[test]
+    fn strict_mode_overrides_everything() {
+        let cfg = BlockerConfig {
+            enabled: false,
+            paused_until: Some(u64::MAX),
+            schedule: Some(ScheduleWindow { start_minute: 100, end_minute: 101 }),
+            sites: vec![site("example.com", true, None)],
+            strict_until: Some(5000),
+        };
+        // Disabled, paused, and outside the schedule — strict still enforces.
+        assert!(cfg.is_strict_active(1000));
+        assert!(cfg.is_blocking_active(1000, 0));
+        assert_eq!(cfg.active_domains(1000, 0), vec!["example.com", "www.example.com"]);
+
+        // Once strict lapses, the normal rules apply again.
+        assert!(!cfg.is_strict_active(5000));
+        assert!(!cfg.is_blocking_active(5000, 0));
+        assert!(cfg.active_domains(5000, 0).is_empty());
     }
 }
