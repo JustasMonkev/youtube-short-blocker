@@ -4,6 +4,8 @@
 //! (`now_ms`, unix epoch milliseconds) and the current local minute-of-day,
 //! so the logic is fully unit-testable on any platform.
 
+#![forbid(unsafe_code)]
+
 pub mod coverage;
 pub mod hosts;
 

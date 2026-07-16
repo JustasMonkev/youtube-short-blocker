@@ -2,6 +2,7 @@
 // Blocks sites in every browser by managing a section of /etc/hosts.
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+#![forbid(unsafe_code)]
 
 #[cfg(not(target_os = "macos"))]
 compile_error!("ShortBlock targets macOS only — build it on a Mac with `cargo tauri build`.");
@@ -385,6 +386,19 @@ fn spawn_sync_loop(handle: tauri::AppHandle) {
             let drifted = matches!(engine::status(&desired), Ok(s) if !s.in_sync);
             if !drifted {
                 continue;
+            }
+
+            // Same invariant as the foreground path: /etc/hosts must never
+            // get ahead of durable state. A failed user-action save leaves
+            // edits in memory only, so prove the config is persisted before
+            // rewriting the hosts file; retry next tick (e.g. once disk
+            // space frees up) rather than syncing something a restart would
+            // silently revert.
+            {
+                let state = app.state.lock().unwrap();
+                if state::save(&state).is_err() {
+                    continue;
+                }
             }
 
             match engine::sync(&desired) {
