@@ -1,0 +1,24 @@
+[package]
+name = "shortblock"
+version = "1.0.0"
+description = "System-wide distraction blocker for macOS — blocks sites in every browser via /etc/hosts."
+edition = "2021"
+license = "MIT"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+blocker-core = { path = "../blocker-core" }
+tauri = { version = "2", features = ["macos-private-api"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+window-vibrancy = "0.7"
+
+[profile.release]
+strip = true
+lto = true
+codegen-units = 1

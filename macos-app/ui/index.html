@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>ShortBlock</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="titlebar" data-tauri-drag-region>
+    <span class="titlebar-name" data-tauri-drag-region>ShortBlock</span>
+  </div>
+
+  <main class="stack">
+    <!-- Status hero -->
+    <section class="glass hero" id="hero">
+      <div class="hero-left">
+        <div class="status-orb" id="status-orb"></div>
+        <div>
+          <h1 id="status-title">Loading…</h1>
+          <p class="muted" id="status-subtitle">Reading system state</p>
+        </div>
+      </div>
+      <label class="switch switch-lg" title="Master blocking switch">
+        <input type="checkbox" id="master-toggle" />
+        <span class="slider"></span>
+      </label>
+    </section>
+
+    <div class="banner glass hidden" id="sync-banner">
+      <span id="sync-banner-text"></span>
+      <button class="btn btn-small" id="sync-now">Apply now</button>
+    </div>
+
+    <!-- Pause -->
+    <section class="glass card">
+      <div class="card-head">
+        <h2>Take a break</h2>
+        <p class="muted">Temporarily lift all blocks, then resume automatically.</p>
+      </div>
+      <div class="chip-row" id="pause-row">
+        <button class="chip" data-minutes="15">15 min</button>
+        <button class="chip" data-minutes="30">30 min</button>
+        <button class="chip" data-minutes="60">1 hour</button>
+        <button class="chip chip-accent hidden" id="resume-btn">Resume blocking</button>
+      </div>
+    </section>
+
+    <!-- Add site -->
+    <section class="glass card">
+      <div class="card-head">
+        <h2>Block a website</h2>
+        <p class="muted">Blocked in every browser on this Mac — Safari, Chrome, Firefox, all of them.</p>
+      </div>
+      <form id="add-form" class="add-form" autocomplete="off">
+        <input class="field grow" id="add-input" placeholder="youtube.com" spellcheck="false" />
+        <select class="field" id="add-timer" title="Optional timer">
+          <option value="">No timer</option>
+          <option value="30">30 min</option>
+          <option value="60">1 hour</option>
+          <option value="180">3 hours</option>
+          <option value="480">8 hours</option>
+          <option value="1440">24 hours</option>
+        </select>
+        <button class="btn btn-accent" type="submit">Block</button>
+      </form>
+      <p class="error hidden" id="add-error"></p>
+    </section>
+
+    <!-- Site list -->
+    <section class="glass card">
+      <div class="card-head">
+        <h2>Blocked websites</h2>
+        <p class="muted" id="site-count"></p>
+      </div>
+      <ul class="site-list" id="site-list"></ul>
+      <p class="empty muted hidden" id="site-empty">Nothing blocked yet. Add a site above to get started.</p>
+    </section>
+
+    <!-- Schedule -->
+    <section class="glass card">
+      <div class="card-head">
+        <h2>Focus hours</h2>
+        <p class="muted">Only enforce blocking during a daily window. Windows may wrap past midnight.</p>
+      </div>
+      <form id="schedule-form" class="schedule-form">
+        <label>From <input class="field" type="time" id="schedule-start" value="09:00" required /></label>
+        <label>Until <input class="field" type="time" id="schedule-end" value="17:00" required /></label>
+        <button class="btn" type="submit">Set window</button>
+        <button class="btn btn-ghost hidden" type="button" id="schedule-clear">Remove window</button>
+      </form>
+      <p class="muted schedule-status" id="schedule-status"></p>
+    </section>
+
+    <footer class="muted footnote" id="footnote"></footer>
+  </main>
+
+  <script src="main.js"></script>
+</body>
+</html>

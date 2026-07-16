@@ -2,6 +2,8 @@
 
 A Chrome/Edge extension for blocking YouTube Shorts and other distracting sites with a lightweight popup, a full settings dashboard, timed rules, and focus-hour controls.
 
+> **Looking for system-wide blocking?** [`macos-app/`](macos-app/README.md) contains **ShortBlock**, a native macOS rewrite in Rust with a Liquid Glass UI. It blocks sites at the OS level via `/etc/hosts`, so the block applies to every browser on the Mac — switching browsers no longer bypasses it.
+
 ## Current UX
 
 - The extension icon opens a small popup that shows:

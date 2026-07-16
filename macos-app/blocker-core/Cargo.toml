@@ -1,0 +1,9 @@
+[package]
+name = "blocker-core"
+version = "1.0.0"
+edition = "2021"
+description = "Platform-independent blocking logic for ShortBlock: host normalization, schedule/timer evaluation, and hosts-file rendering."
+license = "MIT"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
