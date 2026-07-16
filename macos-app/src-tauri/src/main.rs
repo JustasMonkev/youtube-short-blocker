@@ -23,6 +23,11 @@ pub(crate) struct App {
     /// Unix ms before which the background loop must not auto-prompt for
     /// admin rights again (set after a cancelled authentication dialog).
     auto_sync_backoff_until: AtomicU64,
+    /// Set when state.json existed but couldn't be parsed. While present,
+    /// the in-memory defaults are a placeholder — auto-sync is suppressed so
+    /// they can't remove existing hosts entries. Cleared by the first user
+    /// action, which makes the in-memory state authoritative again.
+    startup_warning: Mutex<Option<String>>,
     site_seq: AtomicU64,
 }
 
@@ -38,6 +43,7 @@ struct Snapshot {
     last_synced_at: Option<u64>,
     sync: Option<engine::SyncStatus>,
     sync_error: Option<String>,
+    startup_warning: Option<String>,
     now_ms: u64,
 }
 
@@ -70,6 +76,7 @@ fn snapshot(app: &App, sync_error: Option<String>) -> Snapshot {
         last_synced_at: state.last_synced_at,
         sync: engine::status(&domains).ok(),
         sync_error,
+        startup_warning: app.startup_warning.lock().unwrap().clone(),
         now_ms: now,
     }
 }
@@ -90,6 +97,9 @@ fn reject_if_strict(app: &App) -> Result<(), String> {
 /// A failed sync (e.g. cancelled admin prompt) is reported in the snapshot
 /// rather than treated as a hard error, so the UI can offer a retry.
 pub(crate) fn persist_and_sync(app: &App) -> Snapshot {
+    // A deliberate change makes the in-memory state authoritative, even if
+    // it was seeded from defaults after a corrupt state file.
+    *app.startup_warning.lock().unwrap() = None;
     let sync_error = {
         let mut state = app.state.lock().unwrap();
         let save_error = state::save(&state).err();
@@ -258,12 +268,15 @@ fn pause(app: tauri::State<App>, handle: tauri::AppHandle, minutes: u64) -> Resu
 }
 
 #[tauri::command]
-fn resume(app: tauri::State<App>, handle: tauri::AppHandle) -> Snapshot {
+fn resume(app: tauri::State<App>, handle: tauri::AppHandle) -> Result<Snapshot, String> {
+    // Strict already masks the break; clearing it now would silently erase
+    // the break that should come back when the lock ends.
+    reject_if_strict(&app)?;
     {
         let mut state = app.state.lock().unwrap();
         state.config.paused_until = None;
     }
-    finish(&app, &handle)
+    Ok(finish(&app, &handle))
 }
 
 #[tauri::command]
@@ -310,6 +323,12 @@ fn spawn_sync_loop(handle: tauri::AppHandle) {
             let app = handle.state::<App>();
             let now = now_ms();
 
+            // Defaults loaded from a corrupt state file are placeholders,
+            // not user intent — never let them drive a hosts-file rewrite.
+            if app.startup_warning.lock().unwrap().is_some() {
+                continue;
+            }
+
             let fingerprint = {
                 let state = app.state.lock().unwrap();
                 let minute = local_minute_of_day();
@@ -355,10 +374,12 @@ fn spawn_sync_loop(handle: tauri::AppHandle) {
 }
 
 fn main() {
+    let (loaded_state, startup_warning) = state::load();
     tauri::Builder::default()
         .manage(App {
-            state: Mutex::new(state::load()),
+            state: Mutex::new(loaded_state),
             auto_sync_backoff_until: AtomicU64::new(0),
+            startup_warning: Mutex::new(startup_warning),
             site_seq: AtomicU64::new(0),
         })
         .invoke_handler(tauri::generate_handler![
@@ -400,6 +421,22 @@ fn main() {
                 let _ = window.hide();
             }
         })
-        .run(tauri::generate_context!())
-        .expect("failed to start ShortBlock");
+        .build(tauri::generate_context!())
+        .expect("failed to start ShortBlock")
+        // Quitting during a strict session would leave the hosts entries in
+        // place with no process left to lift them at strict_until, turning a
+        // timed lock into an indefinite one. Refuse to exit until it ends
+        // (the tray's Quit item is also disabled while strict is active).
+        .run(|handle, event| {
+            if let tauri::RunEvent::ExitRequested { api, .. } = &event {
+                let strict = {
+                    let app = handle.state::<App>();
+                    let state = app.state.lock().unwrap();
+                    state.config.is_strict_active(now_ms())
+                };
+                if strict {
+                    api.prevent_exit();
+                }
+            }
+        });
 }

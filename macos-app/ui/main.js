@@ -69,12 +69,21 @@ function render(s) {
 
   // Sync banner
   const banner = el("sync-banner");
-  if (s.sync_error) {
+  const syncNowBtn = el("sync-now");
+  if (s.startup_warning) {
+    // "Apply now" is hidden here: it would sync the placeholder defaults
+    // and remove existing blocks. Any deliberate change re-enables syncing.
+    el("sync-banner-text").textContent = s.startup_warning;
+    syncNowBtn.classList.add("hidden");
+    banner.classList.remove("hidden");
+  } else if (s.sync_error) {
     el("sync-banner-text").textContent = s.sync_error;
+    syncNowBtn.classList.remove("hidden");
     banner.classList.remove("hidden");
   } else if (s.sync && !s.sync.in_sync) {
     el("sync-banner-text").textContent =
       "The system hosts file doesn’t match your block list yet.";
+    syncNowBtn.classList.remove("hidden");
     banner.classList.remove("hidden");
   } else {
     banner.classList.add("hidden");
@@ -92,8 +101,9 @@ function render(s) {
     disarmStrictButton();
   }
 
-  // Pause chips
-  el("resume-btn").classList.toggle("hidden", !paused);
+  // Pause chips (resume is hidden during strict: the stored break must
+  // survive the lock, and the backend rejects clearing it anyway)
+  el("resume-btn").classList.toggle("hidden", !paused || strict);
   document.querySelectorAll("#pause-row .chip[data-minutes]").forEach((chip) => {
     chip.disabled = strict;
   });

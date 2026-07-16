@@ -118,7 +118,19 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
     menu.append(&PredefinedMenuItem::separator(app)?)?;
     menu.append(&MenuItem::with_id(app, "open", "Open ShortBlock…", true, None::<&str>)?)?;
     menu.append(&PredefinedMenuItem::separator(app)?)?;
-    menu.append(&MenuItem::with_id(app, "quit", "Quit ShortBlock", true, None::<&str>)?)?;
+    // Quitting mid-strict would orphan the hosts entries with nothing left
+    // to lift them at strict_until (the exit handler enforces this too).
+    if strict_until.is_some() {
+        menu.append(&MenuItem::with_id(
+            app,
+            "quit-locked",
+            "Quit disabled during strict session",
+            false,
+            None::<&str>,
+        )?)?;
+    } else {
+        menu.append(&MenuItem::with_id(app, "quit", "Quit ShortBlock", true, None::<&str>)?)?;
+    }
     Ok(menu)
 }
 
@@ -151,7 +163,9 @@ fn handle_menu_event(app: &AppHandle, id: &str) {
             }
             apply_and_notify(app);
         }
-        "resume" => {
+        // Guarded like pause: during strict, clearing the stored break would
+        // erase the state that must return when the lock ends.
+        "resume" if !strict => {
             let state = app.state::<App>();
             {
                 let mut state = state.state.lock().unwrap();
@@ -168,7 +182,7 @@ fn handle_menu_event(app: &AppHandle, id: &str) {
                 let _ = window.set_focus();
             }
         }
-        "quit" => app.exit(0),
+        "quit" if !strict => app.exit(0),
         _ => {}
     }
 }

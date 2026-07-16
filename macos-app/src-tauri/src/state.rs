@@ -54,14 +54,36 @@ fn state_path() -> PathBuf {
     data_dir().join("state.json")
 }
 
-pub fn load() -> PersistedState {
+/// Loads persisted state. The second value is a warning when the state file
+/// existed but could not be parsed: the caller must not treat the returned
+/// defaults as the user's real configuration (in particular, must not sync
+/// an empty block list over existing hosts entries) until the user acts.
+pub fn load() -> (PersistedState, Option<String>) {
     let path = state_path();
-    let mut state: PersistedState = match fs::read_to_string(&path) {
-        Ok(raw) => serde_json::from_str(&raw).unwrap_or_default(),
-        Err(_) => PersistedState::default(),
+    let raw = match fs::read_to_string(&path) {
+        // No file at all is a fresh install; defaults are correct.
+        Err(_) => return (PersistedState::default(), None),
+        Ok(raw) => raw,
     };
-    sanitize(&mut state);
-    state
+    match serde_json::from_str::<PersistedState>(&raw) {
+        Ok(mut state) => {
+            sanitize(&mut state);
+            (state, None)
+        }
+        Err(err) => {
+            // A corrupt file (e.g. interrupted write) must not silently
+            // erase the block list. Preserve it for inspection and tell the
+            // caller these defaults are a placeholder, not user intent.
+            let backup = path.with_extension("json.corrupt");
+            let _ = fs::copy(&path, &backup);
+            let warning = format!(
+                "Your saved settings could not be read ({err}). The unreadable file was kept at {}. \
+                 Existing blocks in the hosts file are left untouched until you change something.",
+                backup.display()
+            );
+            (PersistedState::default(), Some(warning))
+        }
+    }
 }
 
 /// Re-validates persisted data before it can influence a privileged write.
@@ -89,5 +111,9 @@ pub fn save(state: &PersistedState) -> Result<(), String> {
     fs::create_dir_all(&dir).map_err(|e| format!("Could not create {}: {e}", dir.display()))?;
     let raw = serde_json::to_string_pretty(state).map_err(|e| e.to_string())?;
     let path = state_path();
-    fs::write(&path, raw).map_err(|e| format!("Could not write {}: {e}", path.display()))
+    // Write-then-rename so a crash mid-save can never leave a truncated
+    // state.json behind — the previous complete file survives instead.
+    let tmp = path.with_extension("json.tmp");
+    fs::write(&tmp, raw).map_err(|e| format!("Could not write {}: {e}", tmp.display()))?;
+    fs::rename(&tmp, &path).map_err(|e| format!("Could not replace {}: {e}", path.display()))
 }
