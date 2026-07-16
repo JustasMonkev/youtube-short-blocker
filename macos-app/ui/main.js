@@ -174,7 +174,8 @@ function siteRow(site, nowMs, strict, coverage) {
     if (site.expires_at > nowMs) {
       timer.textContent = `${fmtCountdown(site.expires_at)} left`;
     } else {
-      timer.textContent = "timer ended";
+      // A lapsed timer stays blocked while a strict session holds it.
+      timer.textContent = strict && site.enabled ? "held until strict ends" : "timer ended";
       timer.classList.add("expired");
     }
     li.appendChild(timer);
@@ -299,27 +300,31 @@ el("add-form").addEventListener("submit", async (e) => {
 });
 
 // Starting a strict session is irreversible, so require a confirming second
-// click instead of firing immediately.
+// click instead of firing immediately. The duration is captured (and the
+// dropdown frozen) at arm time, so the confirming click always locks exactly
+// the duration named on the button.
 let strictArmTimer = null;
 function disarmStrictButton() {
   clearTimeout(strictArmTimer);
   const btn = el("strict-start");
-  btn.dataset.armed = "";
+  delete btn.dataset.armedMinutes;
   btn.textContent = "Start strict session";
+  el("strict-minutes").disabled = false;
 }
 el("strict-start").addEventListener("click", () => {
   const btn = el("strict-start");
-  const minutes = Number(el("strict-minutes").value);
-  if (btn.dataset.armed !== "1") {
-    btn.dataset.armed = "1";
-    const label = el("strict-minutes").selectedOptions[0].textContent;
-    btn.textContent = `Click again to lock for ${label}`;
+  const armed = Number(btn.dataset.armedMinutes || 0);
+  if (!armed) {
+    const select = el("strict-minutes");
+    btn.dataset.armedMinutes = select.value;
+    btn.textContent = `Click again to lock for ${select.selectedOptions[0].textContent}`;
+    select.disabled = true;
     clearTimeout(strictArmTimer);
     strictArmTimer = setTimeout(disarmStrictButton, 6000);
     return;
   }
   disarmStrictButton();
-  call("start_strict", { minutes });
+  call("start_strict", { minutes: armed });
 });
 
 el("schedule-form").addEventListener("submit", (e) => {

@@ -56,9 +56,31 @@ fn state_path() -> PathBuf {
 
 pub fn load() -> PersistedState {
     let path = state_path();
-    match fs::read_to_string(&path) {
+    let mut state: PersistedState = match fs::read_to_string(&path) {
         Ok(raw) => serde_json::from_str(&raw).unwrap_or_default(),
         Err(_) => PersistedState::default(),
+    };
+    sanitize(&mut state);
+    state
+}
+
+/// Re-validates persisted data before it can influence a privileged write.
+/// `state.json` is plain user-writable JSON: a corrupted or tampered file
+/// must not smuggle un-normalized host strings (e.g. containing newlines)
+/// into the hosts-file renderer, so every site host is re-run through
+/// `normalize_host` and anything invalid is dropped.
+fn sanitize(state: &mut PersistedState) {
+    state.config.sites.retain_mut(|site| {
+        match blocker_core::normalize_host(&site.host) {
+            Ok(normalized) => {
+                site.host = normalized;
+                true
+            }
+            Err(_) => false,
+        }
+    });
+    if state.config.schedule.is_some_and(|w| !w.is_valid()) {
+        state.config.schedule = None;
     }
 }
 

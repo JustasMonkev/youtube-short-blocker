@@ -104,7 +104,15 @@ pub(crate) fn persist_and_sync(app: &App) -> Snapshot {
                 app.auto_sync_backoff_until.store(0, Ordering::Relaxed);
                 save_error
             }
-            Err(e) => Some(save_error.map_or(e.clone(), |s| format!("{s}; {e}"))),
+            Err(e) => {
+                // The user just saw (and possibly cancelled) an auth prompt.
+                // Back the background loop off too — otherwise its next tick
+                // sees hosts drift against the already-persisted desired
+                // state and re-prompts seconds after the user declined.
+                app.auto_sync_backoff_until
+                    .store(now_ms() + 30 * 60_000, Ordering::Relaxed);
+                Some(save_error.map_or(e.clone(), |s| format!("{s}; {e}")))
+            }
         }
     };
     snapshot(app, sync_error)
@@ -159,9 +167,10 @@ fn start_strict(
         if state.config.strict_until.is_some_and(|cur| cur > until) {
             return Err("A longer strict session is already running".to_string());
         }
+        // Only strict_until is set: it already overrides `enabled`, pauses,
+        // and the schedule while active, and the user's underlying settings
+        // (switch off, running break) come back intact when the lock ends.
         state.config.strict_until = Some(until);
-        state.config.enabled = true;
-        state.config.paused_until = None;
     }
     Ok(finish(&app, &handle))
 }
@@ -284,40 +293,64 @@ fn sync_now(app: tauri::State<App>, handle: tauri::AppHandle) -> Snapshot {
 }
 
 /// Watches for time-driven transitions (site timers, pause expiry, schedule
-/// boundaries) and external hosts-file drift, and re-applies the block list.
-/// After a cancelled admin prompt it backs off for 30 minutes instead of
-/// re-prompting every tick; any user action in the UI clears the backoff.
+/// boundaries, strict-session expiry) and external hosts-file drift, and
+/// re-applies the block list. After a cancelled admin prompt it backs off for
+/// 30 minutes instead of re-prompting every tick; any user action clears the
+/// backoff.
 fn spawn_sync_loop(handle: tauri::AppHandle) {
-    std::thread::spawn(move || loop {
-        std::thread::sleep(Duration::from_secs(30));
-        let app = handle.state::<App>();
-        let now = now_ms();
-        if app.auto_sync_backoff_until.load(Ordering::Relaxed) > now {
-            continue;
-        }
+    std::thread::spawn(move || {
+        // (strict, blocking_active, desired domains) — when this changes
+        // between ticks, the UI and tray must be told even if /etc/hosts
+        // needs no rewrite (e.g. a strict session over an unchanged block
+        // list expires: the tray must swap its locked menu for the normal
+        // one despite zero hosts drift).
+        let mut last_fingerprint: Option<(bool, bool, Vec<String>)> = None;
+        loop {
+            std::thread::sleep(Duration::from_secs(30));
+            let app = handle.state::<App>();
+            let now = now_ms();
 
-        let desired = {
-            let state = app.state.lock().unwrap();
-            state.config.active_domains(now, local_minute_of_day())
-        };
-        let drifted = matches!(engine::status(&desired), Ok(s) if !s.in_sync);
-        if !drifted {
-            continue;
-        }
+            let fingerprint = {
+                let state = app.state.lock().unwrap();
+                let minute = local_minute_of_day();
+                (
+                    state.config.is_strict_active(now),
+                    state.config.is_blocking_active(now, minute),
+                    state.config.active_domains(now, minute),
+                )
+            };
+            let time_transition =
+                last_fingerprint.as_ref().is_some_and(|prev| *prev != fingerprint);
+            let desired = fingerprint.2.clone();
+            last_fingerprint = Some(fingerprint);
 
-        match engine::sync(&desired) {
-            Ok(_) => {
-                let mut state = app.state.lock().unwrap();
-                state.last_synced_at = Some(now_ms());
-                let _ = state::save(&state);
+            if time_transition {
+                let _ = handle.emit("shortblock://state-changed", ());
+                tray::refresh(&handle);
             }
-            Err(_) => {
-                app.auto_sync_backoff_until
-                    .store(now + 30 * 60_000, Ordering::Relaxed);
+
+            if app.auto_sync_backoff_until.load(Ordering::Relaxed) > now {
+                continue;
             }
+            let drifted = matches!(engine::status(&desired), Ok(s) if !s.in_sync);
+            if !drifted {
+                continue;
+            }
+
+            match engine::sync(&desired) {
+                Ok(_) => {
+                    let mut state = app.state.lock().unwrap();
+                    state.last_synced_at = Some(now_ms());
+                    let _ = state::save(&state);
+                }
+                Err(_) => {
+                    app.auto_sync_backoff_until
+                        .store(now + 30 * 60_000, Ordering::Relaxed);
+                }
+            }
+            let _ = handle.emit("shortblock://state-changed", ());
+            tray::refresh(&handle);
         }
-        let _ = handle.emit("shortblock://state-changed", ());
-        tray::refresh(&handle);
     });
 }
 

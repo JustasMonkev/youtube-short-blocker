@@ -40,7 +40,7 @@ pub fn refresh(app: &AppHandle) {
 }
 
 fn build_menu(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
-    let (enabled, paused_until, strict_until, blocking_active, domain_count) = {
+    let (enabled, paused_until, strict_until, blocking_active, desired_domains) = {
         let state = app.state::<App>();
         let state = state.state.lock().unwrap();
         let now = now_ms();
@@ -50,9 +50,14 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
             state.config.paused_until.filter(|until| *until > now),
             state.config.strict_until.filter(|_| state.config.is_strict_active(now)),
             state.config.is_blocking_active(now, minute),
-            state.config.active_domains(now, minute).len(),
+            state.config.active_domains(now, minute),
         )
     };
+    let domain_count = desired_domains.len();
+    // The desired state only becomes real once /etc/hosts is rewritten; a
+    // cancelled admin prompt leaves them apart. Don't let the menu claim a
+    // state the system isn't actually in.
+    let in_sync = crate::engine::status(&desired_domains).map_or(true, |s| s.in_sync);
 
     let status_text = if let Some(until) = strict_until {
         format!("Strict session until {}", format_clock(until))
@@ -71,6 +76,16 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
 
     let menu = Menu::new(app)?;
     menu.append(&MenuItem::with_id(app, "status", status_text, false, None::<&str>)?)?;
+    if !in_sync {
+        menu.append(&MenuItem::with_id(
+            app,
+            "out-of-sync",
+            "⚠ Not applied yet — hosts file is out of date",
+            false,
+            None::<&str>,
+        )?)?;
+        menu.append(&MenuItem::with_id(app, "apply", "Apply Changes Now…", true, None::<&str>)?)?;
+    }
     menu.append(&PredefinedMenuItem::separator(app)?)?;
 
     // During a strict session there is deliberately nothing to click that
@@ -144,6 +159,8 @@ fn handle_menu_event(app: &AppHandle, id: &str) {
             }
             apply_and_notify(app);
         }
+        // Retry a sync that failed or was cancelled; always safe.
+        "apply" => apply_and_notify(app),
         "open" => {
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.show();

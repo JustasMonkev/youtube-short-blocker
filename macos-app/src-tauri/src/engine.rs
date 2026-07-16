@@ -59,9 +59,30 @@ pub fn sync(desired_domains: &[String]) -> Result<bool, String> {
         return Err("Home directory path contains an unsupported quote character".to_string());
     }
 
+    // The staged file lives in a user-writable directory and the admin
+    // prompt leaves a window in which another same-user process could swap
+    // its contents before the privileged copy runs. The privileged command
+    // therefore first copies the staged file into root-owned /etc (where the
+    // user cannot write), then verifies that root-owned copy against the
+    // SHA-256 embedded in the command itself, and only then installs it —
+    // a staged file mutated at any point fails the check and nothing lands.
+    let digest = {
+        use sha2::{Digest, Sha256};
+        let hash = Sha256::digest(desired_content.as_bytes());
+        hash.iter().map(|b| format!("{b:02x}")).collect::<String>()
+    };
+
     let shell = format!(
-        "/bin/cp {HOSTS_PATH} {HOSTS_PATH}.shortblock.bak && \
-         /bin/cp '{staged_path}' {HOSTS_PATH} && \
+        "tmp=\"$(/usr/bin/mktemp {HOSTS_PATH}.shortblock.XXXXXX)\" || exit 1; \
+         /bin/cp '{staged_path}' \"$tmp\" || {{ /bin/rm -f \"$tmp\"; exit 1; }}; \
+         actual=\"$(/usr/bin/shasum -a 256 \"$tmp\" | /usr/bin/awk '{{print $1}}')\"; \
+         if [ \"$actual\" != \"{digest}\" ]; then \
+           /bin/rm -f \"$tmp\"; \
+           echo 'staged hosts file failed its integrity check' >&2; exit 1; \
+         fi; \
+         /bin/chmod 644 \"$tmp\" && \
+         /bin/cp {HOSTS_PATH} {HOSTS_PATH}.shortblock.bak && \
+         /bin/mv \"$tmp\" {HOSTS_PATH} && \
          /usr/bin/dscacheutil -flushcache && \
          (/usr/bin/killall -HUP mDNSResponder || true)"
     );

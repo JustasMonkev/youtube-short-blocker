@@ -97,12 +97,21 @@ impl BlockerConfig {
     /// right now. Each site expands to the bare host, its `www.` variant
     /// (since `/etc/hosts` cannot express wildcards), and any known related
     /// domains from the coverage table (mobile hosts, mirrors, URL shorteners).
+    ///
+    /// During a strict session per-site timers are held: an enabled site whose
+    /// timer lapses mid-session stays blocked until the lock ends, since the
+    /// user can't re-enable it (weakening actions are rejected while strict).
     pub fn active_domains(&self, now_ms: u64, local_minute: u16) -> Vec<String> {
         if !self.is_blocking_active(now_ms, local_minute) {
             return Vec::new();
         }
+        let strict = self.is_strict_active(now_ms);
         let mut domains: Vec<String> = Vec::new();
-        for site in self.sites.iter().filter(|s| s.is_active(now_ms)) {
+        for site in self
+            .sites
+            .iter()
+            .filter(|s| if strict { s.enabled } else { s.is_active(now_ms) })
+        {
             push_with_www(&mut domains, &site.host);
             for related in coverage::related_domains(&site.host) {
                 push_with_www(&mut domains, related);
@@ -303,5 +312,27 @@ mod tests {
         assert!(!cfg.is_strict_active(5000));
         assert!(!cfg.is_blocking_active(5000, 0));
         assert!(cfg.active_domains(5000, 0).is_empty());
+    }
+
+    #[test]
+    fn strict_mode_holds_expired_site_timers() {
+        let cfg = BlockerConfig {
+            enabled: true,
+            sites: vec![
+                site("timed.example", true, Some(2000)),
+                site("off.example", false, None),
+            ],
+            strict_until: Some(10_000),
+            ..Default::default()
+        };
+        // Timer lapsed at 2000, but the strict session pins the site.
+        assert_eq!(
+            cfg.active_domains(3000, 0),
+            vec!["timed.example", "www.timed.example"]
+        );
+        // Sites that were already disabled stay out — strict pins, it doesn't add.
+        assert!(!cfg.active_domains(3000, 0).contains(&"off.example".to_string()));
+        // After the lock ends the lapsed timer takes effect again.
+        assert!(cfg.active_domains(10_000, 0).is_empty());
     }
 }
